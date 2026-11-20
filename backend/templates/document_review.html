@@ -1,0 +1,230 @@
+{% extends 'base.html' %}
+{% from 'procurement_ui.html' import display_value %}
+{% from 'iar_receiving_ui.html' import receiving_form,receiving_summary with context %}
+{% block head_extra %}{% if active in ['pr','aoq','po','nlp'] %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endif %}{% endblock %}
+{% block content %}
+{% set procurement_display = active in ['ppmp','app','pr','aoq','po','nlp'] %}
+{% set updated_review = active in ['pr','aoq','po','nlp'] %}
+{% set retired_nlp = active=='nlp' %}
+<div class="review-toolbar">
+  <div>
+    <div class="review-kicker">{{'RECEIVING REVIEW' if receiving_items else 'DOCUMENT REVIEW' if updated_review else 'READ-ONLY VIEWING MODE'}}</div>
+    <h2>{{ document_type }}</h2>
+    <div class="review-title-line">
+      <span class="id-chip large">{{ document_no }}</span>
+      <span class="badge {{ 'ok' if status=='Approved' else ('info' if status=='Reviewed' else 'warn') }}">{{ status }}</span>
+      {% if created_at %}<span class="muted">Created {{ created_at }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{url_for(active) if workflow_preview else back_url}}">Back</a>
+    {% if print_url and not workflow_preview %}<a class="btn blue" href="{{ print_url }}" target="_blank">Print</a>{% endif %}
+  </div>
+</div>
+
+<div class="review-mode-notice">
+  <div class="review-mode-icon">✓</div>
+  <div>
+    <b>Review every item before approval.</b>
+    <div>{% if receiving_items %}Enter actual received quantities below before confirming acceptance.{% elif updated_review %}Stored source values are shown for inspection. Approval is recorded only through the separate confirmation below.{% else %}This page is read-only.{% endif %} Check the document identifier, linked records, all line items, quantities, units, specifications, prices, totals, and supporting details.</div>
+  </div>
+</div>
+{% if active=='aoq' %}<p class="notice">AOQ approval checks the reviewed winning quotation. A PR link is not required. Select the approved PR separately after creating the PO.</p>{% endif %}
+{% if active=='po' and status!='Approved' %}<p class="notice">This PO remains {{status}}. Saved comparison evidence and an authorized PR–PO relationship review are required before separate final approval. <a href="{{url_for('nlp')}}">Open PR–PO Review</a>.</p>{% endif %}
+{% if retired_nlp %}<p class="warning-box">Historical comparison record. Its evidence is retained; its old approval action is retired. <a href="{{url_for('nlp')}}">Open PR–PO Review</a>.</p>{% endif %}
+
+{% if linked_records %}
+<div class="card review-card">
+  <h3>Linked Procurement Records</h3>
+  <div class="linked-record-grid">
+    {% for field in linked_records if (not field.diagnostic and not review_field_is_diagnostic(field.label)) or session.get('role')=='Admin' %}
+    <div class="linked-record">
+      <span>{{field.label}}</span>
+      {% if field.url %}<a href="{{ field.url }}" target="_blank"><b>{{display_value(field.value)}}</b></a>{% else %}<b>{{display_value(field.value)}}</b>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if summary %}
+<div class="review-summary-grid">
+  {% for field in summary if (not field.diagnostic and not review_field_is_diagnostic(field.label)) or session.get('role')=='Admin' %}
+  <div class="card review-summary-card">
+    <div class="muted">{{ field.label }}</div>
+    <div class="review-summary-value">{{display_value(field.value)}}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% for section in item_sections %}
+{% set historical_pr = active=='aoq' and section.title=='Approved PR Requirements' %}
+{% if not historical_pr or section['items'] %}
+{% if section.optional or historical_pr %}<details class="card source-comparison"><summary>{{'Historical PR reference' if historical_pr else section.title}} · {{ section.count }} source item(s)</summary>{% endif %}
+<div class="card review-card item-review-section">
+  <div class="section-heading-row">
+    <div>
+      <h3>{{'Historical PR reference' if historical_pr else section.title}}</h3>
+      {% if historical_pr %}<p class="muted">Retained association from an existing record. It is not a prerequisite for independent AOQ approval.</p>{% elif section.note %}<p class="muted">{{ section.note }}</p>{% endif %}
+    </div>
+    <span class="badge info">{{ section.count }} item(s)</span>
+  </div>
+  {% if section['items'] %}
+  <div class="review-table-wrap">
+    <table class="table review-items-table procurement-items">
+      <thead>
+        <tr>
+          <th>Line</th>
+          <th>Source Item</th>
+          <th>Item</th>
+          <th>Description</th>
+          <th>Quantity</th>
+          <th>Unit</th>
+          <th>Unit Cost</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in section['items'] %}
+        {% set shown = item.public if item.public is defined else item %}
+        <tr>
+          <td><b>{{item.index}}</b></td>
+          <td class="source-item"><span class="id-chip mini secondary">{{item.source_number or 'Not recorded'}}</span></td>
+          <td><b>{{display_value(shown.item)}}</b></td>
+          <td class="review-description">{{display_value(shown.description)}}</td>
+          <td class="{{'quantity' if procurement_display}}">{% if shown.quantity is mapping or (shown.quantity is sequence and shown.quantity is not string) or shown.quantity is boolean %}{{display_value(shown.quantity)}}{% else %}{{shown.quantity|quantity if procurement_display else display_value(shown.quantity)}}{% endif %}</td>
+          <td class="{{'unit' if procurement_display}}">{{display_value(shown.unit)}}</td>
+          <td class="{{'numeric' if procurement_display}}">{{display_value(shown.unit_cost)}}</td>
+          <td class="{{'numeric' if procurement_display}}"><b>{{display_value(shown.amount)}}</b></td>
+        </tr>
+        <tr class="review-detail-row">
+          <td colspan="8">
+            <details class="stored-fields">
+              <summary>Item {{item.index}} details</summary>
+              <div class="stored-field-grid">
+                {% for detail in item.details if not detail.diagnostic %}
+                <div class="stored-field {{ 'primary-field' if detail.is_primary else '' }}">
+                  <span>{{ detail.label }}</span>
+                  <b>{{detail.value|month_year if procurement_display and detail.value is string and detail.label in ['Start of Procurement Activity','End of Procurement Activity','Expected Delivery/Implementation Period'] else display_value(detail.value)}}</b>
+                </div>
+                {% else %}
+                <div class="muted">No additional fields stored for this item.</div>
+                {% endfor %}
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-review-warning">No items are stored in this section. Do not approve until the missing-item issue is resolved.</div>
+  {% endif %}
+</div>
+{% if section.optional or historical_pr %}</details>{% endif %}
+{% endif %}
+{% endfor %}
+
+{% if session.get('role')=='Admin' and active not in ['aoq','po','nlp'] %}
+<details class="card advanced-box"><summary>Technical evidence (authorized review)</summary>
+{% for section in item_sections %}{% for item in section['items'] %}
+<details><summary>{{ section.title }} · {{ item.line_id }}</summary>
+  {% for detail in item.details if detail.diagnostic or detail.technical_value %}<p><b>{{ detail.label }}</b></p><pre class="diagnostic-text">{{detail.technical_value or detail.value}}</pre>{% endfor %}
+</details>
+{% endfor %}{% endfor %}
+{% for block in text_blocks if block.diagnostic or review_public_value(block.content)!=block.content %}
+<div class="card review-card">
+  <details class="review-text-block" {% if loop.first and not procurement_display %}open{% endif %}>
+    <summary>{{ block.title }}</summary>
+    <pre>{{block.content|tojson(indent=2) if block.content is mapping or (block.content is sequence and block.content is not string) else block.content}}</pre>
+  </details>
+</div>
+{% endfor %}
+</details>
+{% endif %}
+
+{% for block in text_blocks if not block.diagnostic %}
+<div class="card review-card"><h3>{{block.title}}</h3><div class="source-value">{{display_value(block.content)}}</div></div>
+{% endfor %}
+
+{% if active == 'nlp' and pricing_diagnostics %}
+{% include 'pricing_diagnostics.html' %}
+{% endif %}
+
+{% if active == 'nlp' and item_comparison %}
+{% include 'pr_po_item_comparison.html' %}
+{% endif %}
+
+{% if active=='iar' and status=='Approved' and receiving_items %}{{receiving_summary(receiving_items)}}{% endif %}
+<div class="card approval-review-card {{'procurement-final-approval' if updated_review}}">
+  {% if can_review and not workflow_preview and not retired_nlp %}
+  <div class="approval-warning-title">Review Completion</div>
+  <p>{{ review_effect }}</p>
+  <form method="post" action="{{ review_url }}" id="reviewCompleteForm"
+        data-confirm="Mark {{ document_no }} as Reviewed after confirming that every listed item and stored field was checked?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="review-confirm-check">
+      <input type="checkbox" name="review_confirm" value="yes" id="reviewCompleteCheckbox" required>
+      <span>{{'I reviewed every supplier quotation, winning item, quantity and amount. This AOQ does not require a PR link.' if active=='aoq' else 'I reviewed all items, their stored details, totals, and linked records in this document.'}}</span>
+    </label>
+    <div class="approval-action-row">
+      <a class="btn" href="{{url_for(active) if workflow_preview else back_url}}">Back</a>
+      <button class="btn primary" type="submit" id="completeReviewButton" disabled>{{ review_label }}</button>
+    </div>
+  </form>
+  {% elif can_approve and not workflow_preview and not retired_nlp %}
+  <div class="approval-warning-title">{{'Final PO Approval' if active=='po' else 'AOQ Approval' if active=='aoq' else 'PR Approval' if active=='pr' else 'Final Approval Check'}}</div>
+  <p>{% if active=='pr' %}Approval records this PR as the original approved requirement for later PR–PO Review. AOQ upload remains independent.{% elif active=='po' %}This is the separate final approval. The server rechecks the authorized relationship, original verification evidence and current sources before approving the PO.{% else %}{{ approval_effect }}{% endif %}</p>
+  <form method="post" action="{{ approve_url }}" id="reviewApprovalForm"
+        {% if active in ['aoq','po'] %}data-final-approval="true" data-approval-details="{{ approval_details|tojson|forceescape }}"{% endif %}
+        {% if active in ['ppmp','app','pr','po','iar','ris'] %}data-confirm-category="{{active}}"{% endif %}
+        data-confirm="Approve {{ document_no }} after confirming that every listed item and linked record was reviewed?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if receiving_items %}{{receiving_form(receiving_items)}}{% endif %}
+    <label class="review-confirm-check">
+      <input type="checkbox" name="review_confirm" value="yes" id="reviewConfirmCheckbox" required>
+      <span>{{'I verified the winning supplier, all quotation items, quantities and amounts. This independent AOQ does not require a PR link.' if active=='aoq' else 'I reviewed all items, their stored details, and linked records in this document.'}}</span>
+    </label>
+    {% if active in ['aoq','po'] %}<noscript><label class="review-confirm-check"><input type="checkbox" name="final_confirm" value="yes" required> I explicitly confirm final approval of {{ document_no }} and the details above.</label></noscript>{% endif %}
+    <div class="approval-action-row">
+      <a class="btn" href="{{url_for(active) if workflow_preview else back_url}}">Back</a>
+      <button class="btn primary" type="submit" id="finalApproveButton" {% if active not in ['aoq','po','nlp'] %}disabled{% endif %}>{{ approve_label }}</button>
+    </div>
+  </form>
+  {% elif status == 'Approved' %}
+  <div class="approved-review-state">
+    <span class="badge ok">Approved</span>
+    <div>
+      <b>{{ document_no }} is already approved.</b>
+      <p class="muted">You may still review all stored items and linked records on this page, but the approval action is locked.</p>
+    </div>
+  </div>
+  {% else %}
+  <div class="approved-review-state">
+    <span class="badge info">{{ status }}</span>
+    <div>
+      <b>No approval action is available for the current status.</b>
+      <p class="muted">Return to the record list or complete the required prior workflow step.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% if active=='aoq' and status=='Approved' %}<a class="btn blue" href="{{url_for('po')}}">Continue to purchase orders</a>{% elif active=='pr' and status=='Approved' %}<div class="actions"><a class="btn blue" href="{{url_for('aoq')}}">Independent AOQ upload</a><a class="btn" href="{{url_for('nlp')}}">PR–PO Review</a></div>{% endif %}
+
+<script>
+(function () {
+  const pairs = [
+    ['reviewCompleteCheckbox', 'completeReviewButton'],
+    ['reviewConfirmCheckbox', 'finalApproveButton']
+  ];
+  pairs.forEach(([checkId, buttonId]) => {
+    const checkbox = document.getElementById(checkId);
+    const button = document.getElementById(buttonId);
+    if (!checkbox || !button) return;
+    const update = () => { button.disabled = !checkbox.checked; };
+    checkbox.addEventListener('change', update);
+    update();
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,1343 @@
+"""Revised source-independent procurement path, using the existing Flask APIs.
+
+No startup migrations, environment changes, model substitution or cloud access.
+The global policy or an approved deployment capability activates the new path.
+Deployment capabilities do not modify the global policy. Historical records and
+all existing endpoint URLs remain.
+"""
+import json
+import os
+import math
+import re
+from functools import wraps
+import hashlib
+import secrets
+import uuid
+from pathlib import Path
+from flask import abort,flash,redirect,render_template,request,url_for,has_request_context,g
+from werkzeug.exceptions import HTTPException, ServiceUnavailable
+import procurement_comparison_v1 as evidence
+
+RPC={
+ 'approve_po_before_verification_v2':('bigint','boolean','boolean'),
+ 'approve_po_before_verification_v3':('bigint','boolean','boolean'),
+ 'save_approved_pr_po_verification_v2':('bigint','bigint','text','text','text','double precision','jsonb','text','text'),
+ 'save_approved_pr_po_verification_v3':('bigint','bigint','text','text','text','double precision','jsonb','text','text','bigint'),
+ 'create_pr_from_approved_app_v1':('bigint','text','text','double precision'),
+ 'approve_pr_v1':('bigint','boolean'),
+ 'approve_reviewed_aoq_v1':('bigint','boolean','boolean'),
+ 'create_po_for_review_v2':('bigint',),
+ 'save_pr_po_verification_v1':('bigint','bigint','text','text','text','double precision','jsonb','text','text'),
+ 'review_pr_po_verification_v1':('bigint','jsonb','jsonb','text','text','boolean'),
+ 'review_approved_pr_po_verification_v2':('bigint','jsonb','jsonb','text','text','boolean'),
+ 'approve_po_after_verification_v1':('bigint','boolean','boolean')}
+
+REQUIRED_COLUMNS = [('po','pr_id')] + [('nlp',name) for name in (
+    'pr_id','workflow_version','pr_items_hash','po_items_hash','model_version',
+    'technical_status','reviewed_by','reviewed_at','review_mapping','relationship_reason','evidence_reference')]
+REQUIRED_ROUTINES = dict(RPC, lock_po_for_workflow_v2=('bigint','text'),
+    save_reviewed_aoq_independent_v1=('uuid','bigint','text','integer','jsonb','jsonb','text','text','boolean'))
+
+# Additive NLP-only capability; do not change AOQ/PO activation.
+REVIEW_STAGE_RPC={
+ 'mark_pr_po_reviewed_v3':('bigint','jsonb','jsonb','text','text','boolean'),
+ 'approve_reviewed_pr_po_v3':('bigint','boolean')}
+RPC.update(REVIEW_STAGE_RPC)
+
+# New owner-approved tolerance policy is additive; blank pins keep it disabled
+# until reviewed SQL is supplied. The original technical-MATCH gate remains.
+TOLERANCE_ROUTINES={
+ 'approve_reviewed_pr_po_v4':('bigint','boolean'),
+ 'lock_po_for_workflow_v4':('bigint','text'),
+ 'require_ten_percent_review_v4':('text','jsonb','jsonb','jsonb'),
+ 'approve_tolerated_pr_po_v4':('bigint','jsonb','jsonb','text','text','boolean')}
+TOLERANCE_ROUTINE_MD5={
+ 'require_ten_percent_review_v4':'dcba10fecc06cb13c3dc85d887d7c0b1',
+ 'approve_tolerated_pr_po_v4':'f2c750de246964af449df4e9ebbe6e1f',
+ 'approve_reviewed_pr_po_v4':'5eef2d7b2e84d32e1ae1a4630cf70057',
+ 'lock_po_for_workflow_v4':'cebda6b491a15e82be49b821eb7a8f71'}
+RPC['approve_reviewed_pr_po_v4']=TOLERANCE_ROUTINES['approve_reviewed_pr_po_v4']
+RPC['refresh_pr_po_comparison_v4']=('bigint','jsonb','boolean')
+REFRESH_ROUTINE_MD5='a4a3cca709023a74e4a87e670da5213d'
+
+# A true policy cannot select older review/approval routines without the
+# saved-evidence guard. The private helper needs no backend EXECUTE grant.
+GUARDED_ROUTINES = (
+ ('psms_aoq_api.require_saved_technical_match_v2(text,jsonb,jsonb,jsonb)','de6422cdbd430db0b6999fb9579cb26a'),
+ ('psms_aoq_api.review_pr_po_verification_v1(bigint,jsonb,jsonb,text,text,boolean)','b8312aa77b0f95629ebb1c92cf760fdd'),
+ ('psms_aoq_api.approve_po_after_verification_v1(bigint,boolean,boolean)','293c2341e8054d1bff15ef0a45c30d60'))
+
+RELEASE_ID = 'revised-procurement-v1'
+RELEASE_SCHEMA = 'psms_revised_release'
+RELEASE_PROJECT = 'prj_WuHbP7ztALH56NUyLCy1e6exvgs4'
+RELEASE_GUARDED_ROUTINES = (
+    ('psms_revised_release.policy_v1()', '708461349509a23a532125c1cadf6b85'),
+    ('psms_revised_release.require_release_v1()', 'd172b08188f9e0ebd3ff47edd3105be2'),
+    ('psms_revised_release.save_reviewed_aoq_v1(uuid,bigint,text,integer,jsonb,jsonb,text,text,boolean)', 'eeae5fc9952cf8451caa4b490c7b87d7'),
+    ('psms_revised_release.save_reviewed_aoq_independent_v1(uuid,bigint,text,integer,jsonb,jsonb,text,text,boolean)', '4c777bd267f8cffcc1fe561c488b786a'),
+    ('psms_revised_release.approve_reviewed_aoq_v1(bigint,boolean,boolean)', '8fc82bd7edf6c42b977afb335ccd84a6'),
+    ('psms_revised_release.create_pr_from_approved_app_v1(bigint,text,text,double precision)', '364e99e5ba8b7ff1ffe0fc6b5d9564e4'),
+    ('psms_revised_release.approve_pr_v1(bigint,boolean)', '97f3f8d630dbb518f77567edddf5e9ae'),
+    ('psms_revised_release.create_po_for_review_v2(bigint)', 'ec92dd74b7f1f912c1cdb0a5018143d7'),
+    ('psms_revised_release.save_pr_po_verification_v1(bigint,bigint,text,text,text,double precision,jsonb,text,text)', '80aa55fa3f138fcb7da88b97e0ba596b'),
+    ('psms_revised_release.lock_po_for_workflow_v2(bigint,text)', 'a5485a580e4bf536e102524d520a77db'),
+    ('psms_revised_release.require_saved_technical_match_v2(text,jsonb,jsonb,jsonb)', 'de6422cdbd430db0b6999fb9579cb26a'),
+    ('psms_revised_release.review_pr_po_verification_v1(bigint,jsonb,jsonb,text,text,boolean)', '44d516b9109b982bb0c5a682bedab17a'),
+    ('psms_revised_release.approve_po_after_verification_v1(bigint,boolean,boolean)', 'a8c1f7f13891cacf08e6d4fca588197c'),
+)
+
+
+def unavailable(diagnostic, message):
+    """Fixed safe diagnostics, never driver text, credentials or source values."""
+    error = ServiceUnavailable(description=message)
+    error.psms_diagnostic = diagnostic
+    raise error
+
+
+def configured_release_context():
+    """Validate Option B for immutable staging URLs, without SQL activation.
+
+    The existing Action stages with --prod --skip-domain, so its VERCEL_ENV is
+    production. Environment alone never authorizes a deployment: the exact
+    server hostname, request host, project and private SQL capability must agree.
+    Keep release credentials deployment-scoped, never Production project-wide.
+    """
+    release = os.environ.get('PSMS_PROCUREMENT_RELEASE', '')
+    token = os.environ.get('PSMS_PROCUREMENT_RELEASE_TOKEN', '')
+    if not release and not token:
+        return None
+    host = os.environ.get('VERCEL_URL', '')
+    if (release != RELEASE_ID or not re.fullmatch(r'[0-9a-f]{64}', token)
+            or os.environ.get('VERCEL') != '1'
+            or os.environ.get('VERCEL_ENV') not in ('preview', 'production')
+            or os.environ.get('VERCEL_PROJECT_ID') != RELEASE_PROJECT
+            or not re.fullmatch(r'asuncion-[a-z0-9]{9}-arman-a87f\.vercel\.app', host)):
+        unavailable('PROCUREMENT_RELEASE_CONFIG_INVALID', 'The procurement release deployment is not authorized.')
+    return release, host, token
+
+
+def release_context():
+    """Deployment capability, never a browser-supplied workflow override."""
+    context = configured_release_context()
+    if context and (not has_request_context() or request.host != context[1]):
+        unavailable('PROCUREMENT_RELEASE_HOST_MISMATCH', 'The procurement release requires its exact authorized staging hostname.')
+    return context
+
+
+def apply_release_context(con):
+    context = release_context()
+    if context:
+        con.execute("select set_config('psms.procurement_release_id',?,true),"
+                    "set_config('psms.procurement_release_host',?,true),"
+                    "set_config('psms.procurement_release_token',?,true)", context)
+    return bool(context)
+
+
+def api_schema():
+    return RELEASE_SCHEMA if release_context() else 'psms_aoq_api'
+
+
+def contracts_ready(con):
+    """Read metadata only. A true feature policy cannot bypass missing contracts."""
+    columns=','.join("('"+table+"','"+column+"')" for table,column in REQUIRED_COLUMNS)
+    schema=api_schema()
+    required=dict(REQUIRED_ROUTINES)
+    if schema==RELEASE_SCHEMA:
+        required['save_reviewed_aoq_v1']=required['save_reviewed_aoq_independent_v1']
+    routines=','.join("('"+schema+'.'+name+'('+','.join(kinds)+")')" for name,kinds in required.items())
+    guarded=RELEASE_GUARDED_ROUTINES if schema==RELEASE_SCHEMA else GUARDED_ROUTINES
+    guards=','.join("('"+signature+"','"+digest+"')" for signature,digest in guarded)
+    release_metadata=""" and routine.prosecdef=(routine.proname<>'require_saved_technical_match_v2')
+              and exists(select 1 from unnest(routine.proconfig) setting
+                where replace(setting,' ','')='search_path=pg_catalog,pg_temp')
+              and (routine.proname='require_saved_technical_match_v2'
+                or 'row_security=on'=any(routine.proconfig))""" if schema==RELEASE_SCHEMA else ''
+    release_custody=""" and exists(select 1 from pg_catalog.pg_class
+          where oid=to_regclass('psms_revised_release.deployments') and relrowsecurity)
+        and has_table_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','SELECT')
+        and not has_table_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','INSERT,UPDATE,DELETE,TRUNCATE')
+        and not has_any_column_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','INSERT')
+        and not has_any_column_privilege('psms_aoq_approval_owner','psms_revised_release.deployments','UPDATE')
+        and not has_table_privilege('psms_revised_release.deployments','SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
+        and not has_schema_privilege('psms_revised_release','CREATE')
+        and not has_function_privilege('psms_revised_release.require_release_v1()','EXECUTE')
+        and not has_function_privilege('psms_revised_release.require_saved_technical_match_v2(text,jsonb,jsonb,jsonb)','EXECUTE')""" if schema==RELEASE_SCHEMA else ''
+    row=con.execute("""select
+        not exists(select 1 from (values """+columns+""") required(table_name,column_name)
+          where not exists(select 1 from pg_catalog.pg_attribute a
+            join pg_catalog.pg_class c on c.oid=a.attrelid
+            join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+            where n.nspname='public' and c.relname=required.table_name
+              and a.attname=required.column_name and a.attnum>0 and not a.attisdropped))
+        and not exists(select 1 from (values """+routines+""") required(signature)
+          where not coalesce(has_function_privilege(to_regprocedure(required.signature),'EXECUTE'),false))
+        and not exists(select 1 from (values """+guards+""") guarded(signature,digest)
+          where not exists(select 1 from pg_catalog.pg_proc routine
+            join pg_catalog.pg_roles owner_role on owner_role.oid=routine.proowner
+            where routine.oid=to_regprocedure(guarded.signature)
+              and md5(replace(routine.prosrc,chr(13)||chr(10),chr(10)))=guarded.digest
+              and owner_role.rolname='psms_aoq_approval_owner'
+              and not owner_role.rolsuper and not owner_role.rolbypassrls and not owner_role.rolcanlogin"""+release_metadata+"""))
+        and exists(select 1 from pg_catalog.pg_attribute
+          where attrelid=to_regclass('psms_documents.aoq_drafts') and attname='pr_id'
+            and not attnotnull and not attisdropped)
+        and case when to_regclass('psms_documents.pr_po_reviews') is null then false
+          else has_table_privilege('psms_documents.pr_po_reviews','SELECT') end"""+release_custody+""" as revised_contract_ready""").fetchone()
+    return bool(row and row.get('revised_contract_ready') is True)
+
+def enabled(api):
+    if has_request_context() and hasattr(g,'revised_procurement_enabled'):
+        return g.revised_procurement_enabled
+    con=None;active=False
+    try:
+        # A missing pre-expansion relation must not poison the shared GET read
+        # transaction. Use one private read-only connection, cached per request.
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY')
+        con.execute("SET LOCAL statement_timeout='3s'")
+        scoped=apply_release_context(con)
+        row=con.execute('select psms_revised_release.policy_v1() as policy' if scoped
+                        else 'select policy from psms_documents.procurement_policy where singleton').fetchone()
+        active=bool(row and type(row['policy']) is dict and row['policy'].get('enabled') is True)
+        if scoped and not active:
+            unavailable('PROCUREMENT_CAPABILITY_DENIED', 'The procurement release is not enabled for this deployment.')
+        if active and (row['policy'].get('link_authority') not in ('ADMIN_DOCUMENTED','EXISTING_REVIEWERS_DOCUMENTED')
+                       or row['policy'].get('po_clock')!='ASIA_MANILA'):
+            unavailable('PROCUREMENT_POLICY_PENDING', 'The revised relationship authority and PO numbering policy are not approved. No legacy write was attempted.')
+        if active and not contracts_ready(con):
+            unavailable('PROCUREMENT_CONTRACT_UNAVAILABLE', 'The revised procurement database contract is unavailable. No legacy write was attempted.')
+    except HTTPException:
+        raise
+    except Exception as error:
+        # A genuinely absent pre-expansion relation preserves the legacy path.
+        # Denied/unavailable metadata must not select an older write path.
+        if active or release_context() or getattr(error,'sqlstate',None) not in ('42P01','3F000'):
+            state = getattr(error, 'sqlstate', None)
+            diagnostic = ('PROCUREMENT_CAPABILITY_DENIED' if state == 'PA007' else
+                          'PROCUREMENT_CONTRACT_UNAVAILABLE' if state in ('42P01','3F000','42883') else
+                          'PROCUREMENT_DATABASE_UNAVAILABLE')
+            unavailable(diagnostic, 'The revised procurement database contract could not be verified. No legacy write was attempted.')
+        active=False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+    if has_request_context():g.revised_procurement_enabled=active
+    return active
+
+
+def pr_reference(api,*,with_nlp=False):
+    if not enabled(api):return 'aq.pr_id'
+    return 'coalesce(n.pr_id,p.pr_id,aq.pr_id)' if with_nlp else 'coalesce(p.pr_id,aq.pr_id)'
+
+def identifier(value):
+    if not re.fullmatch(r'[1-9][0-9]{0,18}',str(value or '')) or int(value)>9223372036854775807:
+        abort(400,description='Select valid source document identifiers.')
+    return int(value)
+
+def rpc(api,name,values):
+    if name not in RPC:raise ValueError('Unknown procurement operation')
+    if getattr(g,'workflow_preview',False) or request.method!='POST':abort(405)
+    if not enabled(api):abort(409,description='The revised procurement workflow is disabled.')
+    if name in ('approve_po_before_verification_v2','approve_po_before_verification_v3','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3') and not final_contract_ready(api):
+        abort(409,description='The approved-PO-before-NLP database contract is not installed and reviewed. No legacy operation or direct table update was attempted.')
+    if name=='save_approved_pr_po_verification_v3' and not replacement_contract_ready(api):
+        abort(409,description='The append-only replacement database contract is unavailable.')
+    if name=='review_approved_pr_po_verification_v2' and not replacement_contract_ready(api,relationship_review=True):
+        abort(409,description='The authorized post-approval relationship-review contract is unavailable.')
+    if name in REVIEW_STAGE_RPC and not review_stage_contract_ready(api):
+        abort(409,description='The persisted PR-PO review-stage SQL contract is not installed and reviewed.')
+    if name=='approve_reviewed_pr_po_v4' and not tolerance_contract_ready(api):
+        abort(409,description='The reviewed 10% discrepancy approval policy is unavailable.')
+    if name=='refresh_pr_po_comparison_v4' and not refresh_contract_ready(api):
+        abort(409,description='The reviewed source-comparison refresh contract is unavailable.')
+    try:
+        with api['durable_ocr'].transaction(api,read_committed=True) as (con,uid):
+            sql='select * from '+api_schema()+'.'+name+'('+','.join('?::'+kind for kind in RPC[name])+')'
+            receipt=con.execute(sql,values).fetchone()
+            if not receipt:raise RuntimeError('Operation receipt unavailable')
+            key=('pr_id' if name in ('create_pr_from_approved_app_v1','approve_pr_v1') else
+                 'aoq_id' if name=='approve_reviewed_aoq_v1' else
+                 'nlp_id' if name in REVIEW_STAGE_RPC or name in ('refresh_pr_po_comparison_v4','approve_reviewed_pr_po_v4','save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3','review_pr_po_verification_v1','review_approved_pr_po_verification_v2') else 'po_id')
+            if type(receipt.get(key)) is not int or receipt[key]<=0:
+                raise RuntimeError('Operation receipt identifier invalid')
+            if name.startswith('approve_') and (receipt[key]!=values[0] or receipt.get('new_status')!='Approved'):
+                raise RuntimeError('Operation approval receipt invalid')
+            if name=='mark_pr_po_reviewed_v3' and (receipt[key]!=values[0] or receipt.get('new_status')!='Reviewed'):
+                raise RuntimeError('Operation review receipt invalid')
+            if name=='refresh_pr_po_comparison_v4' and (receipt[key]!=values[0] or receipt.get('new_status')!='For Review'):
+                raise RuntimeError('Operation refresh receipt invalid')
+            if name in ('create_pr_from_approved_app_v1','create_po_for_review_v2','save_pr_po_verification_v1','save_approved_pr_po_verification_v2','save_approved_pr_po_verification_v3') and type(receipt.get('created')) is not bool:
+                raise RuntimeError('Operation creation receipt invalid')
+        return receipt
+    except HTTPException:raise
+    except Exception as error:
+        code=getattr(error,'sqlstate',None)
+        messages={
+          'PA001':(422,'Review complete item correspondence, technical findings and confirmation fields.'),
+          'PA002':(409,'The source or review changed, or a required approval is missing. Reopen the saved documents.'),
+          'PA003':(403,'An active authorized reviewer is required.'),
+          'PA004':(404,'The selected procurement record is unavailable.'),
+          'PA005':(409,'The official authority for independent PR-PO relationships has not been approved.'),
+          'PA006':(409,'This independent relationship requires an Approved PR with approved APP/PPMP evidence.')}
+        if code in messages:abort(messages[code][0],description=messages[code][1])
+        if code=='PA007':abort(503,description='The procurement release is disabled or unavailable.')
+        # Driver details, parameters and source contents must never reach logs/UI.
+        return api['ui_feedback'].database_failure(error)
+
+def source_pair(api,pr_id,po_id):
+    pr_id,po_id=identifier(pr_id),identifier(po_id)
+    pr=api['q']("select id,no,status,office,items,app_id,ppmp_id from pr where id=? and status='Approved'",(pr_id,),one=True)
+    po=api['q']("""select p.*,a.pr_id legacy_pr_id,a.status aoq_status,a.no aoq_no,a.winner aoq_winner
+       from po p join aoq a on a.id=p.aoq_id where p.id=?
+       and p.status in ('For Review','Approved') and a.status='Approved'""",(po_id,),one=True)
+    if not pr or not po:abort(404,description='Select an Approved PR and a PO from an Approved AOQ.')
+    if not po.get('aoq_winner') or po.get('supplier')!=po['aoq_winner']:
+        abort(409,description='The PO supplier conflicts with its approved AOQ quotation. Reopen the source documents.')
+    if ((po.get('legacy_pr_id') is not None and po['legacy_pr_id']!=pr_id)
+        or (po.get('pr_id') is not None and po['pr_id']!=pr_id)):
+        abort(409,description='The selected PR conflicts with this document\'s existing official relationship.')
+    return dict(pr),dict(po)
+
+def comparison(api,pr,po,*,manual_mapping=None,semantic=False):
+    left,right=api['parse_items'](pr['items']),api['parse_items'](po['items'])
+    candidates=[];semantic_state='NOT_REQUESTED'
+    if semantic:
+        try:
+            from nlp_runtime_selection import model_root
+            if api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
+                candidates=evidence.fasttext_candidates(left,right,model_root(api['app'].config,api['NLP_FASTTEXT_DIR']))
+                semantic_state='INSTALLED_FASTTEXT_INFERENCE'
+            else:
+                semantic_state='PAIR_CLASSIFIER_RUNTIME; ITEM_CANDIDATES_NOT_AVAILABLE'
+        except Exception:semantic_state='UNAVAILABLE; NO_SYNTHETIC_SCORE'
+    result=evidence.compare(left,right,semantic_candidates=candidates,manual_mapping=manual_mapping)
+    result['semantic_state']=semantic_state
+    result['semantic_candidates']=[candidate for row in range(1,len(left)+1) for candidate in
+        sorted((c for c in candidates if c['pr_position']==row),key=lambda c:c['similarity'],reverse=True)[:3]]
+    return result
+
+def verification_save_plan(rows,pr_id,pr_hash,po_hash):
+    """Choose a saved fact or an append-only replacement, never a silent rerun."""
+    def current(row):return (row.get('pr_id')==pr_id and row.get('pr_items_hash')==pr_hash
+                            and row.get('po_items_hash')==po_hash and row.get('workflow_version')==2)
+    if not rows:return {'action':'fresh'}
+    modern=[r for r in rows if r.get('workflow_version')==2]
+    legacy=[r for r in rows if r.get('workflow_version')==1]
+    if len(rows)==1 and len(modern)==1 and current(modern[0]):return {'action':'reopen','id':modern[0]['id']}
+    if len(legacy)!=1 or legacy[0].get('pr_id')!=pr_id:return {'action':'conflict'}
+    old=legacy[0]
+    if (old.get('status')!='For Review' or any(old.get(k) is not None for k in
+        ('reviewed_by','reviewed_at','review_mapping','staff_decision'))
+        or (old.get('relationship_reason') or '').strip() or (old.get('evidence_reference') or '').strip()):return {'action':'conflict'}
+    if len(rows)==1:return {'action':'replace','legacy_id':old['id']}
+    if len(rows)==2 and len(modern)==1 and current(modern[0]):
+        details=modern[0].get('details') or {}
+        if isinstance(details,str):
+            try:details=json.loads(details)
+            except (TypeError,ValueError):return {'action':'conflict'}
+        lineage=details.get('verification_lineage') if isinstance(details,dict) else None
+        if (isinstance(lineage,dict) and lineage.get('legacy_nlp_id')==old['id']
+            and isinstance(lineage.get('legacy_record_sha256'),str)
+            and re.fullmatch('[0-9a-f]{64}',lineage['legacy_record_sha256'])):
+            return {'action':'reopen','id':modern[0]['id']}
+    return {'action':'conflict'}
+
+
+def current_verification(rows,pr_id,pr_hash,po_hash):
+    """Reopen one current saved result without changing history or save rules."""
+    matches=[row for row in rows if row.get('workflow_version')==2
+             and row.get('pr_id')==pr_id and row.get('pr_items_hash')==pr_hash
+             and row.get('po_items_hash')==po_hash]
+    return matches[0] if len(matches)==1 else None
+
+
+def verification_conflict(rows,message):
+    """Explain bounded workflow conflicts without exposing driver diagnostics."""
+    return render_template('pr_po_conflict.html',active='nlp',title='PR-PO verification review',
+                           message=message,records=rows),409
+
+
+def replacement_contract_ready(api,*,relationship_review=False):
+    """The private lineage table has no backend access; only its pinned RPC writes."""
+    name='review_approved_pr_po_verification_v2' if relationship_review else 'save_approved_pr_po_verification_v3'
+    digest=FINAL_ROUTINE_MD5.get(name,'')
+    if not re.fullmatch('[0-9a-f]{32}',digest):return False
+    con=None
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY');con.execute("SET LOCAL statement_timeout='3s'")
+        row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+          where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef
+          and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+          and 'row_security=on'=any(p.proconfig)
+          and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+          and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+          and has_function_privilege(current_user,p.oid,'EXECUTE')
+          and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+            where a.privilege_type='EXECUTE' and a.grantee not in(p.proowner,'psms_vercel_backend'::regrole)))
+          and exists(select 1 from pg_class c where c.oid=to_regclass('psms_documents.nlp_legacy_replacements')
+            and c.relowner='postgres'::regrole and c.relrowsecurity and c.relforcerowsecurity
+            and not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+              where a.grantee<>c.relowner and (a.grantee<>'psms_aoq_approval_owner'::regrole
+                or a.privilege_type not in ('SELECT','INSERT') or a.is_grantable))) as ready""",
+            (api_schema()+'.'+name+'('+','.join(RPC[name])+')',digest)).fetchone()
+        return bool(row and row.get('ready') is True)
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+
+
+def review_stage_contract_ready(api):
+    """Fail closed until both additive review operations match reviewed SQL."""
+    if api_schema()!='psms_aoq_api':return False
+    if not replacement_contract_ready(api,relationship_review=True):return False
+    pins={'mark_pr_po_reviewed_v3':'54a45ecdd82de1bca36f8c4884776fac',
+          'approve_reviewed_pr_po_v3':'938c2a551d0fefd827e52752b0d91cb2'}
+    con=None
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY')
+        con.execute("SET LOCAL statement_timeout='3s'")
+        for name,digest in pins.items():
+            row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+              where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef
+              and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+              and 'row_security=on'=any(p.proconfig)
+              and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+              and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+              and has_function_privilege(current_user,p.oid,'EXECUTE')
+              and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+                where a.privilege_type='EXECUTE' and a.grantee not in(p.proowner,'psms_vercel_backend'::regrole))) ready""",
+                ('psms_aoq_api.'+name+'('+','.join(REVIEW_STAGE_RPC[name])+')',digest)).fetchone()
+            if not row or row.get('ready') is not True:return False
+        return True
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+
+def tolerance_contract_ready(api):
+    """Verify new immutable routines and private helper privileges, without DDL."""
+    if api_schema()!='psms_aoq_api':return False
+    if has_request_context() and hasattr(g,'tolerance_procurement_ready'):
+        return g.tolerance_procurement_ready
+    if any(not re.fullmatch('[0-9a-f]{32}',TOLERANCE_ROUTINE_MD5.get(name,''))
+           for name in TOLERANCE_ROUTINES):return False
+    con=None;ready=False
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY')
+        con.execute("SET LOCAL statement_timeout='3s'")
+        for name,kinds in TOLERANCE_ROUTINES.items():
+            public=name in ('approve_reviewed_pr_po_v4','lock_po_for_workflow_v4')
+            definer=name!='require_ten_percent_review_v4'
+            row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+              where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef=?
+              and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+              and 'row_security=on'=any(p.proconfig)
+              and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+              and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+              and has_function_privilege('psms_vercel_backend',p.oid,'EXECUTE')=?
+              and has_function_privilege(current_user,p.oid,'EXECUTE')=?
+              and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+                where a.privilege_type='EXECUTE' and (a.is_grantable or
+                  (a.grantee<>p.proowner and (not ? or a.grantee<>'psms_vercel_backend'::regrole))))) ready""",
+                ('psms_aoq_api.'+name+'('+','.join(kinds)+')',definer,
+                 TOLERANCE_ROUTINE_MD5[name],public,public,public)).fetchone()
+            if not row or row.get('ready') is not True:return False
+        ready=True
+        return True
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+        if has_request_context():g.tolerance_procurement_ready=ready
+
+
+def refresh_contract_ready(api):
+    """An explicit source refresh needs its reviewed additive SQL and audit."""
+    if api_schema()!='psms_aoq_api' or not re.fullmatch('[0-9a-f]{32}',REFRESH_ROUTINE_MD5):return False
+    if has_request_context() and hasattr(g,'refresh_procurement_ready'):return g.refresh_procurement_ready
+    con=None;ready=False
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY');con.execute("SET LOCAL statement_timeout='3s'")
+        row=con.execute("""select exists(select 1 from pg_proc p join pg_roles r on r.oid=p.proowner
+          where p.oid=to_regprocedure(?) and r.rolname='psms_aoq_approval_owner' and p.prosecdef
+          and not r.rolcanlogin and not r.rolsuper and not r.rolbypassrls
+          and 'row_security=on'=any(p.proconfig)
+          and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+          and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+          and has_function_privilege(current_user,p.oid,'EXECUTE')
+          and has_function_privilege('psms_vercel_backend',p.oid,'EXECUTE')
+          and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+            where a.privilege_type='EXECUTE' and (a.is_grantable or a.grantee not in(p.proowner,'psms_vercel_backend'::regrole)))) ready""",
+            ('psms_aoq_api.refresh_pr_po_comparison_v4(bigint,jsonb,boolean)',REFRESH_ROUTINE_MD5)).fetchone()
+        ready=bool(row and row.get('ready') is True);return ready
+    except Exception:return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+        if has_request_context():g.refresh_procurement_ready=ready
+
+
+def refresh_current_comparison(api,row,pr,po):
+    """Replay saved semantic candidates; never fetch or recompute embeddings."""
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        saved=details.get('technical_comparison')
+        if type(saved) is not dict:return None
+        left,right=api['parse_items'](pr['items']),api['parse_items'](po['items'])
+        candidates=saved.get('semantic_candidates',[])
+        if type(candidates) is not list or len(candidates)>len(left)*3:return None
+        for value in candidates:
+            if (type(value) is not dict or type(value.get('pr_position')) is not int
+                or type(value.get('po_position')) is not int or not 1<=value['pr_position']<=len(left)
+                or not 1<=value['po_position']<=len(right) or type(value.get('similarity')) not in (int,float)
+                or not math.isfinite(value['similarity']) or not -1<=value['similarity']<=1):return None
+        result=dict(saved)
+        result.update(evidence.compare(left,right,semantic_candidates=candidates))
+        return result
+    except (ValueError,TypeError,AttributeError,KeyError,IndexError):return None
+
+
+def refresh_comparison_allowed(row,pr,po,current):
+    """Source-identical bounded wording refresh, never a model rerun or approval."""
+    try:
+        if row.get('workflow_version')!=2 or row.get('status') not in ('For Review','Reviewed') or po.get('status')!='Approved':return False
+        if (evidence.fingerprint(pr['items'])!=row.get('pr_items_hash')
+                or evidence.fingerprint(po['items'])!=row.get('po_items_hash')):return False
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        saved=details.get('technical_comparison')
+        if (type(saved) is not dict or type(current) is not dict or current.get('wording_policy')!='CORE_DESCRIPTION_V2'
+                or saved.get('source_fields')!=current.get('source_fields') or saved==current):return False
+        ignored={'rows','technical_status','wording_policy'}
+        if {k:v for k,v in saved.items() if k not in ignored}!={k:v for k,v in current.items() if k not in ignored}:return False
+        old_rows,new_rows=saved.get('rows'),current.get('rows')
+        if type(old_rows) is not list or type(new_rows) is not list or len(old_rows)!=len(new_rows):return False
+        changed=False
+        for old,new in zip(old_rows,new_rows):
+            if (type(old) is not dict or type(new) is not dict
+                or {k:v for k,v in old.items() if k!='checks'}!={k:v for k,v in new.items() if k!='checks'}):return False
+            old_checks,new_checks=old.get('checks'),new.get('checks')
+            if type(old_checks) is not list or type(new_checks) is not list or len(old_checks)!=len(new_checks):return False
+            for before,after in zip(old_checks,new_checks):
+                if before==after:continue
+                if (type(before) is not dict or type(after) is not dict
+                    or before.get('attribute')!='source specification wording'
+                    or before.get('state')!='REQUIRES_HUMAN_REVIEW' or after.get('state')!='MATCH'
+                    or {k:v for k,v in before.items() if k!='state'}!={k:v for k,v in after.items() if k!='state'}):return False
+                changed=True
+        if not changed:return False
+        # Validate complete new evidence without mutating the saved record.
+        candidate=dict(row,technical_status=current.get('technical_status'),details={'technical_comparison':current})
+        mapping=[line.get('po_position') for line in current.get('rows',[])]
+        return tolerance_review_matches(candidate,mapping,current)
+    except (ValueError,TypeError,AttributeError,KeyError):return False
+
+
+def saved_review_evidence(api,row,pr,po):
+    """Replay saved correspondence evidence against unchanged source fields.
+
+    Saved FastText candidates are evidence, never classifier confidence. This
+    function performs no new inference and cannot upgrade unresolved findings.
+    """
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details',{})
+        saved=details.get('technical_comparison')
+        left,right=api['parse_items'](pr['items']),api['parse_items'](po['items'])
+        if not left or not right:return None,None,False
+        candidates=saved.get('semantic_candidates',[])
+        if type(candidates) is not list or len(candidates)>len(left)*3:return None,None,False
+        for value in candidates:
+            if (type(value) is not dict or type(value.get('pr_position')) is not int
+                or type(value.get('po_position')) is not int or not 1<=value['pr_position']<=len(left)
+                or not 1<=value['po_position']<=len(right) or type(value.get('similarity')) not in (int,float)
+                or not math.isfinite(value['similarity']) or not -1<=value['similarity']<=1):return None,None,False
+        current=evidence.compare(left,right,semantic_candidates=candidates)
+        keys=('version','technical_status','rows','source_fields','missing_or_unresolved_pr_items',
+              'extra_or_unallocated_items','automatic_approval','human_review_required')
+        valid=(row.get('technical_status')==current['technical_status']
+               and all(saved.get(key)==current.get(key) for key in keys)
+               and evidence.fingerprint(pr['items'])==row.get('pr_items_hash')
+               and evidence.fingerprint(po['items'])==row.get('po_items_hash'))
+        return saved,current,valid
+    except (ValueError,TypeError,AttributeError,KeyError,IndexError):return None,None,False
+
+def staged_verification(api,row):
+    """Persist human review first; final approval uses that saved evidence."""
+    action=request.form.get('review_action')
+    expected={'review':('For Review',),'approve':('Reviewed',),'recalculate':('For Review','Reviewed')}
+    if row.get('workflow_version')!=2 or action not in expected or row.get('status') not in expected[action]:
+        abort(409,description='Reopen the current verification and use its available Review or Approve action.')
+    if action!='recalculate' and not review_stage_contract_ready(api):abort(409,description='The persisted PR-PO review-stage SQL contract is unavailable.')
+    if request.form.get('review_confirm')!='yes':abort(400,description='Explicit source review confirmation is required.')
+    pr,po=source_pair(api,row['pr_id'],row['po_id'])
+    if not relationship_review_allowed(api,po):abort(403,description='Relationship review is unavailable for this account or policy.')
+    if action=='recalculate':
+        if not refresh_contract_ready(api):abort(409,description='The reviewed source-comparison refresh contract is unavailable.')
+        current=refresh_current_comparison(api,row,pr,po)
+        if not refresh_comparison_allowed(row,pr,po,current):
+            abort(409,description='Recalculation requires unchanged complete sources, a bounded wording-policy update and a final discrepancy of at most 10%. No history was changed.')
+        receipt=rpc(api,'refresh_pr_po_comparison_v4',(row['id'],json.dumps(current,ensure_ascii=False),True))
+        if not isinstance(receipt,dict):return receipt
+        if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id'] or receipt.get('new_status')!='For Review':abort(503)
+        flash('Current sources recalculated. Previous comparison and human review are preserved in history. Review and approval must be completed again; the model result is unchanged.')
+        return redirect(url_for('nlp',verification_id=row['id']))
+    saved,current,valid=saved_review_evidence(api,row,pr,po)
+    if not valid:abort(409,description='Saved verification evidence differs from the current sources. No review or approval was saved.')
+    mapping=[line.get('po_position') for line in saved['rows']]
+    if action=='review':
+        if (any(row.get(key) is not None for key in ('reviewed_by','reviewed_at','review_mapping'))
+            or (row.get('relationship_reason') or '').strip() or (row.get('evidence_reference') or '').strip()):
+            abort(409,description='Existing human review evidence requires preserved history. No review was overwritten.')
+        reason=request.form.get('relationship_reason','').strip()
+        reference=request.form.get('evidence_reference','').strip()
+        if not 10<=len(reason)<=2000 or not 3<=len(reference)<=500:
+            abort(422,description='Provide a documented review reason and supporting source reference.')
+        receipt=rpc(api,'mark_pr_po_reviewed_v3',(row['id'],json.dumps(mapping),json.dumps(saved),reason,reference,True))
+        status='Reviewed'
+    else:
+        if request.form.get('final_confirm')!='yes':abort(400,description='Explicit final approval confirmation is required.')
+        tolerance=tolerance_contract_ready(api) and tolerance_review_matches(row,mapping,current)
+        if not tolerance and (row.get('result') not in ('Acceptable','Needs Review') or not stored_review_matches(row,mapping,current)):
+            abort(422,description='Unresolved technical or model findings prevent approval. Reviewed does not authorize IAR.')
+        receipt=rpc(api,'approve_reviewed_pr_po_v4' if tolerance else 'approve_reviewed_pr_po_v3',(row['id'],True))
+        status='Approved'
+    if not isinstance(receipt,dict):return receipt
+    if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id'] or receipt.get('new_status')!=status:abort(503)
+    flash('PR-PO review saved as Reviewed. Final approval remains separate.' if status=='Reviewed' else
+          'PR-PO relationship Approved. Receiving remains subject to the existing IAR eligibility checks.')
+    return redirect(url_for('iar',po_id=row['po_id']) if status=='Approved' else url_for('nlp',verification_id=row['id']))
+
+def nlp_page(api):
+    if request.method=='POST':
+        pr_id,po_id=identifier(request.form.get('pr_id')),identifier(request.form.get('po_id'))
+        if request.form.get('action')=='compare':return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id))
+        if request.form.get('action')!='run':abort(400)
+        existing=api['q']('select id,status,pr_id,pr_items_hash,po_items_hash,workflow_version,details,reviewed_by,reviewed_at,review_mapping,staff_decision,relationship_reason,evidence_reference from nlp where po_id=? order by id',(po_id,))
+        try:pr,po=source_pair(api,pr_id,po_id)
+        except HTTPException as error:
+            if error.code!=409:raise
+            return verification_conflict(existing,'The selected PR and PO conflict with their approved source relationship or supplier. Open the saved verification below, or choose the corresponding approved PR and PO. No record was changed.')
+        if po['status']!='Approved':
+            return verification_conflict(existing,'Approve this PO before running verification. Existing results remain available below; nothing was changed.')
+        pr_hash,po_hash=evidence.fingerprint(pr['items']),evidence.fingerprint(po['items'])
+        current=current_verification(existing,pr_id,pr_hash,po_hash)
+        if current:
+            flash('Opened the existing verification for these unchanged sources. Its review, percentage and approval status were preserved.')
+            return redirect(url_for('nlp',verification_id=current['id']))
+        plan=verification_save_plan(existing,pr_id,pr_hash,po_hash)
+        if plan['action']=='reopen':
+            return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=plan['id']))
+        if plan['action']=='conflict':
+            return verification_conflict(existing,'This PO already has verification history for another source selection, changed source data, or multiple current records. Open its saved results below. A new inference cannot overwrite that history; no record was changed.')
+        if plan['action']=='replace' and not replacement_contract_ready(api):
+            abort(409,description='The append-only legacy verification replacement contract is not installed and reviewed.')
+        if not final_contract_ready(api):abort(409,description='The post-approval NLP save contract is not installed and reviewed. No model result or database record was fabricated.')
+        from nlp_runtime_selection import require_available
+        require_available(api['app'].config)
+        try:
+            result,confidence,raw=api['nlp_predict'](
+                evidence.inference_items(api['parse_items'](pr['items']),'PR'),
+                evidence.inference_items(api['parse_items'](po['items']),'PO'))
+            if raw.get('trained_model_used') is not True or result not in ('Acceptable','Needs Review','Needs Recanvass','Reject'):
+                raise RuntimeError('Trained model result required')
+            if isinstance(confidence,bool) or not math.isfinite(float(confidence)) or not 0<=float(confidence)<=100:
+                raise RuntimeError('Invalid model confidence')
+            technical=comparison(api,pr,po,semantic=True)
+            metadata=raw.get('model_metadata') or {}
+            metadata_hash=hashlib.sha256(json.dumps(metadata,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
+            artifact_hashes={}
+            if api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
+                import fasttext_nlp_runtime
+                from nlp_runtime_selection import model_root
+                for kind,path in fasttext_nlp_runtime.required_paths(model_root(api['app'].config,api['NLP_FASTTEXT_DIR'])).items():
+                    artifact_hashes[kind]=hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        except Exception:
+            abort(503,description='Model verification is unavailable for these sources. No fallback result was saved.')
+        model_version=(str(metadata.get('model_version') or metadata.get('feature_schema') or raw.get('runtime') or raw.get('model'))
+            +':manifest='+metadata_hash[:16]+':artifacts='+hashlib.sha256(json.dumps(artifact_hashes,sort_keys=True).encode()).hexdigest()[:16])[:200]
+        details={key:raw[key] for key in ('model','architecture','runtime','decision_mode','trained_status_label',
+            'trained_status_confidence','trained_status_probabilities','trained_primary_issue','trained_issue_confidence',
+            'trained_issue_probabilities','feature_dimension') if key in raw}
+        details.update(trained_model_used=True,automatic_approval=False,human_review_required=True,
+            model_metadata_sha256=metadata_hash,model_artifacts_sha256=artifact_hashes,
+            approved_inference_release_id=api['app'].config.get('_PSMS_INFERENCE_RELEASE_ID'),
+            workflow_version=2,source_pr_id=pr_id,source_po_id=po_id,technical_comparison=technical,
+            overall_verification_status=(result if result in ('Reject','Needs Recanvass') or technical['technical_status']=='MATCH' else 'Needs Review'))
+        values=(po_id,pr_id,evidence.fingerprint(pr['items']),evidence.fingerprint(po['items']),result,float(confidence),
+            json.dumps(details,ensure_ascii=False),model_version,technical['technical_status'])
+        try:
+            receipt=rpc(api,'save_approved_pr_po_verification_v3',values+(plan['legacy_id'],)) if plan['action']=='replace' else rpc(api,'save_approved_pr_po_verification_v2',values)
+        except HTTPException as error:
+            if error.code!=409:raise
+            # A concurrent request may have saved the same immutable sources.
+            # Reopen only a unique exact-source result; never retry a write or
+            # mistake stale/conflicting evidence for successful verification.
+            saved_now=api['q']('select id,status,pr_id,pr_items_hash,po_items_hash,workflow_version,details,reviewed_by,reviewed_at,review_mapping,staff_decision,relationship_reason,evidence_reference from nlp where po_id=? order by id',(po_id,))
+            current=current_verification(saved_now,pr_id,pr_hash,po_hash)
+            if current:
+                flash('Another request saved this source pair. Opened its existing verification; no duplicate was created.')
+                return redirect(url_for('nlp',verification_id=current['id']))
+            return verification_conflict(saved_now,'The source documents or verification history changed while processing. Open the saved result below and review the current source pair. No result was overwritten or approved.')
+        if not isinstance(receipt,dict):return receipt
+        flash('Verification results saved. PO approval and NLP verification remain separate records; discrepancies do not authorize receiving.')
+        return redirect(url_for('nlp',pr_id=pr_id,po_id=po_id,verification_id=receipt['nlp_id']))
+    prs=api['q']("select id,no,office,items from pr where status='Approved' order by id desc")
+    pos=api['q']("""select p.id,p.no,p.supplier,p.items,a.no aoq_no,exists(select 1 from nlp n where n.po_id=p.id) has_verification,
+       coalesce(p.pr_id,a.pr_id) linked_pr_id,
+       (select n.pr_id from nlp n where n.po_id=p.id and n.workflow_version=2 order by n.id desc limit 1) saved_pr_id
+       from po p join aoq a on a.id=p.aoq_id where p.status='Approved' and a.status='Approved' order by p.id desc""")
+    rows=api['paged_q']("""select n.id,n.no,n.pr_id,n.po_id,n.result,n.status,n.technical_status,n.workflow_version,n.details,n.pr_items_hash,n.po_items_hash,n.created_at,n.reviewed_at,n.reviewed_by,
+       p.no po_no,p.items po_items,p.supplier,r.no pr_no,r.items pr_items,r.office,a.no aoq_no from nlp n join po p on p.id=n.po_id
+       left join aoq a on a.id=p.aoq_id left join pr r on r.id=coalesce(n.pr_id,p.pr_id,a.pr_id) order by n.id desc""")
+    pr=po=None;technical=None;selected={}
+    if request.args.get('verification_id'):
+        saved=api['q']('select * from nlp where id=?',(identifier(request.args['verification_id']),),one=True)
+        if not saved:abort(404)
+        if saved.get('workflow_version') not in (1,2):
+            legacy=next((dict(row) for row in rows if row['id']==saved['id']),None)
+            if not legacy:abort(404)
+            return historical_review(api,legacy)
+        selected=verification_context(api,dict(saved));pr=selected['pr'];po=selected['po'];technical=selected['comparison']
+        if ((request.args.get('pr_id') and identifier(request.args['pr_id'])!=pr['id'])
+                or (request.args.get('po_id') and identifier(request.args['po_id'])!=po['id'])):abort(404)
+    elif request.args.get('pr_id') or request.args.get('po_id'):
+        pr,po=source_pair(api,request.args.get('pr_id'),request.args.get('po_id'))
+        technical=comparison(api,pr,po)
+    return render_template('revised_nlp.html',active='nlp',title='PR-PO Verification',prs=prs,pos=pos,rows=rows,
+        selected_pr=pr,selected_po=po,comparison=technical,
+        pr_items=api['parse_items'](pr['items']) if pr else [],po_items=api['parse_items'](po['items']) if po else [],
+        model_state=api['trained_nlp_model_status'](),verification=selected,
+        final_contract_ready=final_contract_ready(api),
+        record_displays={r['id']:verification_display(dict(r),stale=(r.get('workflow_version') in (1,2) and
+            (r.get('pr_items_hash')!=evidence.fingerprint(r.get('pr_items')) or
+             r.get('po_items_hash')!=evidence.fingerprint(r.get('po_items'))))) for r in rows})
+
+def relationship_review_allowed(api,po):
+    """Display existing SQL-authorized review actions; SQL remains authoritative."""
+    account=getattr(g,'psms_account',None) if has_request_context() else None
+    if (not account or account.get('status')!='Active'
+            or account.get('role') not in ('Admin','Staff','Inspector')):return False
+    con=None
+    try:
+        con=api['conn']()
+        con.execute('SET TRANSACTION READ ONLY')
+        con.execute("SET LOCAL statement_timeout='3s'")
+        scoped=apply_release_context(con)
+        row=con.execute('select psms_revised_release.policy_v1() as policy' if scoped
+                        else 'select policy from psms_documents.procurement_policy where singleton').fetchone()
+        if scoped and not contracts_ready(con):return False
+    except Exception:
+        return False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+    policy=row.get('policy') if row else None
+    if not isinstance(policy,dict) or policy.get('enabled') is not True:return False
+    if scoped and (policy.get('po_clock')!='ASIA_MANILA'
+                   or policy.get('link_authority') not in ('ADMIN_DOCUMENTED','EXISTING_REVIEWERS_DOCUMENTED')):
+        return False
+    # Historical approved-PR links retain the existing reviewer-role rule.
+    if po.get('legacy_pr_id') is not None:return True
+    authority=policy.get('link_authority')
+    return (authority=='ADMIN_DOCUMENTED' and account['role']=='Admin'
+            or authority=='EXISTING_REVIEWERS_DOCUMENTED')
+
+
+def discrepancy_incidence(saved):
+    """Affected saved item lines / assessed lines; no field weights or writes.
+
+    Unknown correspondence is not proof of absence. Per-check 0/100 values are
+    binary findings, never quantity deviation or model confidence.
+    """
+    def unavailable():
+        return dict(value=None,affected=None,total=None,pairs={},checks={},extras=[],
+                    reason='Complete source-bound structured evidence is unavailable.')
+    result=unavailable()
+    if not isinstance(saved,dict) or saved.get('version')!='PR_PO_REVIEW_V1':return unavailable()
+    fields=saved.get('source_fields');rows=saved.get('rows')
+    if not isinstance(fields,dict) or not isinstance(rows,list):return unavailable()
+    refs={}
+    for side in ('PR','PO'):
+        source=fields.get(side)
+        if not isinstance(source,list) or not 1<=len(source)<=200:return unavailable()
+        refs[side]=[]
+        for entry in source:
+            if (not isinstance(entry,dict) or not isinstance(entry.get('reference'),str)
+                    or not entry['reference'] or not isinstance(entry.get('fields'),list)
+                    or not entry['fields'] or any(not isinstance(f,str) or not f for f in entry['fields'])):return unavailable()
+            refs[side].append(entry['reference'])
+        if len(set(refs[side]))!=len(refs[side]):return unavailable()
+    if len(rows)!=len(refs['PR']):return unavailable()
+    missing=saved.get('missing_or_unresolved_pr_items');extra=saved.get('extra_or_unallocated_items')
+    if not isinstance(missing,list) or not isinstance(extra,list):return unavailable()
+    if (any(type(p) is not int or not 1<=p<=len(refs['PR']) for p in missing)
+            or len(set(missing))!=len(missing)
+            or any(type(p) is not int or not 1<=p<=len(refs['PO']) for p in extra)
+            or len(set(extra))!=len(extra)):return unavailable()
+    positions=set();mapped=set();unresolved=set();affected=0;unknown=False
+    for line in rows:
+        if not isinstance(line,dict):return unavailable()
+        p,q=line.get('pr_position'),line.get('po_position');identity=line.get('identity')
+        if (type(p) is not int or not 1<=p<=len(refs['PR']) or p in positions
+                or line.get('pr_reference')!=refs['PR'][p-1]):return unavailable()
+        positions.add(p)
+        if q is not None and (type(q) is not int or not 1<=q<=len(refs['PO'])
+                or line.get('po_reference')!=refs['PO'][q-1]):return unavailable()
+        checks=line.get('checks')
+        if not isinstance(checks,list):return unavailable()
+        bound=identity in ('EXACT_NAME','HUMAN_CONFIRMED') and q is not None
+        if identity not in ('EXACT_NAME','HUMAN_CONFIRMED','CANDIDATE','UNRESOLVED'):return unavailable()
+        if not bound:
+            if identity in ('CANDIDATE','UNRESOLVED'):unresolved.add(p)
+            result['pairs'][p]=None;unknown=True
+            continue
+        if q in mapped:return unavailable()
+        mapped.add(q)
+        units=[c for c in checks if isinstance(c,dict) and c.get('attribute')=='unit']
+        quantities=[c for c in checks if isinstance(c,dict) and c.get('attribute')=='quantity']
+        mandatory=len(units)==len(quantities)==1
+        unit_ok=False
+        if mandatory:
+            u=units[0];a=evidence.norm(u.get('requested'));b=evidence.norm(u.get('offered'))
+            unit_ok=(u.get('conditional_on_identity') is False and u.get('state')=='MATCH'
+                     and bool(a) and bool(b) and evidence.UNITS.get(a,a)==evidence.UNITS.get(b,b))
+        values=[]
+        for index,check in enumerate(checks):
+            value=None
+            if isinstance(check,dict) and check.get('conditional_on_identity') is False:
+                attribute=check.get('attribute');state=check.get('state')
+                requested=check.get('requested');offered=check.get('offered')
+                present=lambda v:v is not None and v!='' and v!=[] and v!={} and not isinstance(v,bool)
+                if isinstance(attribute,str) and attribute and present(requested):
+                    if state in ('MATCH','MISMATCH') and present(offered):value=int(state=='MISMATCH')
+                    elif state=='MISSING_SPECIFICATION' and not present(offered):value=1
+                if attribute=='quantity':
+                    a=evidence.number(requested);b=evidence.number(offered)
+                    if identity!='EXACT_NAME' or not unit_ok or a is None or b is None or a<=0 or b<=0:value=None
+                    elif state!=('MATCH' if a==b else 'MISMATCH'):value=None
+                if attribute=='unit' and state=='MATCH' and not unit_ok:value=None
+                if attribute=='unit' and state=='MISMATCH':
+                    a=evidence.norm(requested);b=evidence.norm(offered)
+                    if not a or not b or evidence.UNITS.get(a,a)==evidence.UNITS.get(b,b):value=None
+            result['checks'][(p,index)]=None if value is None else 100*value
+            values.append(value)
+        if any(v==1 for v in values):line_value=1
+        elif mandatory and unit_ok and values and all(v==0 for v in values) and identity=='EXACT_NAME':line_value=0
+        else:line_value=None
+        result['pairs'][p]=None if line_value is None else 100*line_value
+        if line_value is None:unknown=True
+        else:affected+=line_value
+    if positions!=set(range(1,len(refs['PR'])+1)) or set(missing)!=unresolved:return unavailable()
+    # A PO candidate may be an unmatched PR counterpart, not a proven extra.
+    if unresolved or unknown:
+        # A single, source-backed substitution counts one affected line.
+        # Never compare quantities or allocate extra lines across uncertain
+        # product identities. Name differences/probabilities are insufficient.
+        if len(refs['PR'])==len(refs['PO'])==len(rows)==1:
+            line=rows[0]
+            explicit=[(index,c) for index,c in enumerate(line['checks']) if isinstance(c,dict)
+                and c.get('attribute')=='source-backed product kind' and c.get('state')=='MISMATCH'
+                and c.get('conditional_on_identity') is False
+                and isinstance(c.get('requested'),str) and isinstance(c.get('offered'),str)
+                and {c.get('requested'),c.get('offered')}=={'USB flash storage','Copy paper'}]
+            if (line.get('pr_position')==line.get('po_position')==1 and explicit
+                    and line.get('po_reference')==refs['PO'][0]):
+                index,_=explicit[0]
+                result.update(value=100.0,affected=1,total=1,pairs={1:100},
+                    checks={(1,index):100},extras=[],reason='')
+                return result
+        if not unresolved:
+            # Correspondence is fixed. Bound the final rate without pretending
+            # that a pending specification passed or failed.
+            extras=set(range(1,len(refs['PO'])+1))-mapped
+            if set(extra)!=extras:return unavailable()
+            total=len(refs['PR'])+len(extras)
+            pending=sum(value is None for value in result['pairs'].values())
+            result.update(lower_value=100*(affected+len(extras))/total,
+                          upper_value=100*(affected+len(extras)+pending)/total,
+                          pending_items=pending)
+        result['reason']='Unresolved identity or checks prevent a final item-line rate.'
+        return result
+    expected_extra=set(range(1,len(refs['PO'])+1))-mapped
+    if set(extra)!=expected_extra:return unavailable()
+    result['extras']=sorted(expected_extra)
+    total=len(refs['PR'])+len(expected_extra);affected+=len(expected_extra)
+    result.update(value=100*affected/total,affected=affected,total=total,reason='')
+    return result
+
+
+def discrepancy_band(value):
+    """Owner-defined incidence bands; never an approval or model confidence."""
+    if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=100:
+        return 'Needs Review'
+    return 'Match' if value<=10 else 'Needs Review' if value<=50 else 'Mismatch'
+
+
+def verification_display(row,pr_items=(),po_items=(),stale=False):
+    """Presentation of saved facts only; never derive a score from confidence."""
+    details=row.get('details') or {}
+    if isinstance(details,str):
+        try:details=json.loads(details)
+        except (ValueError,TypeError):details={}
+    if not isinstance(details,dict):details={}
+    saved=details.get('technical_comparison')
+    saved=saved if isinstance(saved,dict) else {}
+    incidence=discrepancy_incidence(saved)
+    def percentage(value):
+        if isinstance(value,bool) or value is None:return 'Not calculated'
+        try:value=float(value)
+        except (ValueError,TypeError,OverflowError):return 'Not calculated'
+        return f'{value:.2f}%' if math.isfinite(value) and 0<=value<=100 else 'Not calculated'
+    labels={'MATCH':'Match','MISMATCH':'Mismatch'}
+    findings=[];pairs=[];legacy_states=[];legacy_pairs_match=True
+    def item(items,position):
+        return items[position-1] if type(position) is int and 1<=position<=len(items) else {}
+    for line in saved.get('rows',[]) if isinstance(saved.get('rows'),list) else []:
+        if not isinstance(line,dict):continue
+        left=item(pr_items,line.get('pr_position'));right=item(po_items,line.get('po_position'))
+        checks=line.get('checks',[])
+        valid_checks=[c for c in checks if isinstance(c,dict)] if isinstance(checks,list) else []
+        pair_status='Mismatch' if any(c.get('state')=='MISMATCH' for c in valid_checks) else 'Match' if valid_checks and all(c.get('state')=='MATCH' for c in valid_checks) and line.get('identity') not in ('UNRESOLVED','CANDIDATE') else 'Needs Review'
+        legacy_pairs_match=legacy_pairs_match and pair_status=='Match'
+        pair_value=None if stale else incidence['pairs'].get(line.get('pr_position'))
+        quantity_percentage=None;quantity_formula='Quantity deviation requires confirmed item identity, matching units and valid positive quantities.'
+        quantity_checks=[c for c in valid_checks if c.get('attribute')=='quantity']
+        unit_checks=[c for c in valid_checks if c.get('attribute')=='unit']
+        if not stale and line.get('identity')=='EXACT_NAME' and len(quantity_checks)==len(unit_checks)==1:
+            quantity,unit=quantity_checks[0],unit_checks[0]
+            quantity_index=next(i for i,c in enumerate(checks) if c is quantity)
+            binding_valid=incidence['checks'].get((line.get('pr_position'),quantity_index)) is not None
+            requested=evidence.number(quantity.get('requested'));offered=evidence.number(quantity.get('offered'))
+            left_unit=evidence.norm(unit.get('requested'));right_unit=evidence.norm(unit.get('offered'))
+            if (binding_valid and quantity.get('conditional_on_identity') is False and unit.get('conditional_on_identity') is False
+                    and requested is not None and requested>0 and offered is not None and offered>=0
+                    and quantity.get('state')==('MATCH' if requested==offered else 'MISMATCH')
+                    and unit.get('state')=='MATCH' and left_unit and right_unit
+                    and evidence.UNITS.get(left_unit,left_unit)==evidence.UNITS.get(right_unit,right_unit)):
+                deviation=abs(offered-requested)/requested*100
+                quantity_percentage=f'{deviation:.2f}%'
+                quantity_formula=f'|{offered} - {requested}| / {requested} x 100 = {quantity_percentage}. Quantity only; specifications and model findings remain separate.'
+        pair_percentage=percentage(pair_value)
+        if (not stale and pair_value is None and incidence.get('lower_value') is not None
+                and line.get('pr_position') in incidence['pairs']):pair_percentage='0.00-100.00%'
+        pairs.append(dict(pr=left,po=right,pr_position=line.get('pr_position'),po_position=line.get('po_position'),
+            status='Needs Review' if pair_value is None else 'Mismatch' if pair_value else 'Match',percentage=pair_percentage,
+            quantity_percentage=quantity_percentage,quantity_formula=quantity_formula,
+            percentage_basis='Item-line incidence: this confirmed line is affected (100%) or fully checked (0%).'))
+        for index,check in enumerate(checks if isinstance(checks,list) else []):
+            if not isinstance(check,dict):continue
+            legacy_states.append(check.get('state'))
+            check_value=None if stale else incidence['checks'].get((line.get('pr_position'),index))
+            check_percentage=percentage(check_value)
+            if not stale and check_value is None and (line.get('pr_position'),index) in incidence['checks']:
+                check_percentage='0.00-100.00%'
+            findings.append(dict(detail=str(check.get('attribute') or 'Item correspondence').replace('source specification field ',''),
+                requested=check.get('requested'),offered=check.get('offered'),
+                status='Needs Review' if check_value is None else 'Mismatch' if check_value else 'Match',
+                percentage=check_percentage,percentage_basis='Binary saved-check indicator: 100% confirmed violation, 0% passed; a range is pending review, not quantity deviation.'))
+        if not checks:
+            legacy_states.append(None)
+            findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated'))
+    mismatch=any(s=='MISMATCH' for s in legacy_states)
+    clean=(row.get('technical_status')=='MATCH' and saved.get('technical_status')=='MATCH'
+           and bool(legacy_states) and all(s=='MATCH' for s in legacy_states)
+           and bool(pairs) and legacy_pairs_match
+           and not saved.get('missing_or_unresolved_pr_items') and not saved.get('extra_or_unallocated_items'))
+    # The installed review/IAR contracts allow Acceptable or Needs Review after
+    # explicit authorization and complete technical MATCH. A classifier label
+    # must not erase a genuinely calculated zero affected-line rate.
+    status='Needs Review' if stale else 'Mismatch' if mismatch or row.get('result') in ('Reject','Needs Recanvass') else 'Match' if clean and row.get('result') in ('Acceptable','Needs Review') else 'Needs Review'
+    eligibility_status=status  # Preserve the pre-existing IAR gate independently.
+    first=next((f for f in findings if f['status']!='Match'),None)
+    explanation='Source documents changed after verification.' if stale else (first['detail'].capitalize()+': '+first['status']+'.') if first else 'No unresolved saved discrepancy.' if status=='Match' else 'Saved evidence requires review.'
+    value=None if stale else incidence['value']
+    if value is None:
+        confirmed=next((f for f in findings if f['status']=='Mismatch' and f['percentage']=='100.00%'),None) if not stale else None
+        status='Mismatch' if confirmed else 'Needs Review'
+        if confirmed:explanation=confirmed['detail'].capitalize()+': Mismatch. Overall percentage is not calculated.'
+        elif not stale:explanation=incidence['reason']
+    elif value>0:
+        status=discrepancy_band(value)
+        # A small affected-line rate cannot waive mandatory discrepancies.
+        if status=='Match' and eligibility_status!='Match':status='Needs Review'
+    elif status!='Match':
+        status='Needs Review';explanation='Structured item-line discrepancy is 0%; the saved model result still requires review. This percentage does not authorize approval.'
+    for position in incidence['extras'] if value is not None else []:
+        offered=item(po_items,position)
+        reference=saved['source_fields']['PO'][position-1]['reference']
+        pairs.append(dict(pr={},po=offered,pr_position=None,po_position=position,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
+        findings.append(dict(detail='Extra PO item',requested=None,offered=offered or reference,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
+    resolved=sum(value is not None for value in incidence['checks'].values())
+    check_count=len(incidence['checks'])
+    pending_checks=check_count-resolved
+    coverage=f'{100*resolved/check_count:.2f}%' if check_count and not stale else None
+    pending_items=incidence.get('pending_items',0) if not stale else 0
+    measured=percentage(value)
+    if value is None and not stale and incidence.get('lower_value') is not None:
+        measured=f"{incidence['lower_value']:.2f}-{incidence['upper_value']:.2f}%"
+        explanation=f'{pending_checks} saved check(s) across {pending_items} item(s) require review. The displayed range bounds the final item-line discrepancy; it does not authorize approval.'
+    basis=(f"Item-line discrepancy incidence: {incidence['affected']} affected / {incidence['total']} assessed lines; not model confidence or quantity deviation."
+           if value is not None else 'Not calculated: '+explanation)
+    if value is None and measured!='Not calculated':basis='Pending discrepancy range: '+explanation
+    return dict(status=status,percentage=measured,percentage_basis=basis,eligibility_status=eligibility_status,
+        percentage_final=value is not None,review_coverage=coverage,pending_checks=pending_checks,pending_items=pending_items,
+        score_band=discrepancy_band(value),
+        findings=findings,pairs=pairs,explanation=explanation)
+
+def verification_context(api,row):
+    pr,po=source_pair(api,row['pr_id'],row['po_id'])
+    saved,current,evidence_current=saved_review_evidence(api,row,pr,po)
+    technical=current if current is not None else comparison(api,pr,po)
+    try:details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else (row.get('details') or {})
+    except (ValueError,TypeError):details={}
+    if not isinstance(details,dict):details={}
+    saved_comparison=details.get('technical_comparison')
+    if not isinstance(saved_comparison,dict):saved_comparison=None
+    stale=evidence.fingerprint(pr['items'])!=row['pr_items_hash'] or evidence.fingerprint(po['items'])!=row['po_items_hash']
+    current_mapping=[item.get('po_position') for item in technical.get('rows',[])]
+    review_evidence_current=stored_review_matches(row,current_mapping,technical)
+    tolerance_ready=tolerance_contract_ready(api)
+    tolerance_eligible=(not stale and evidence_current and tolerance_review_matches(row,current_mapping,technical))
+    policy_approved=(tolerance_ready and row.get('status')=='Approved'
+                     and tolerance_approval_current(row,technical))
+    approval_available=(tolerance_ready and tolerance_eligible) or (
+        review_evidence_current and row.get('result') in ('Acceptable','Needs Review'))
+    display=verification_display(row,api['parse_items'](pr['items']),api['parse_items'](po['items']),stale)
+    refresh_available=False
+    if row.get('status') in ('For Review','Reviewed') and not stale and refresh_contract_ready(api):
+        refreshed=refresh_current_comparison(api,row,pr,po)
+        refresh_available=refresh_comparison_allowed(row,pr,po,refreshed)
+    if tolerance_ready and tolerance_eligible:
+        if discrepancy_incidence(technical).get('value')==0:display['status']='Match'
+        display['eligibility_status']='Eligible under 10% policy'
+        display['explanation']='Final measured discrepancy is at most 10%. Authorized manual approval is permitted; original model output and individual findings are preserved.'
+    inspection_ready=False
+    if not stale and row.get('status')=='Approved' and po.get('status')=='Approved':
+        if policy_approved:inspection_ready=True
+        elif review_evidence_current and display['eligibility_status']=='Match' and row.get('result') in ('Acceptable','Needs Review'):
+            inspection_ready=any(p['id']==po['id'] for p in api['next_available_records']('iar')[5])
+    return dict(row=row,pr=pr,po=po,
+        pr_items=api['parse_items'](pr['items']),po_items=api['parse_items'](po['items']),comparison=technical,
+        details=details,saved_comparison=saved_comparison,stale=stale,review_evidence_current=review_evidence_current,
+        can_review_relationship=relationship_review_allowed(api,po),score_ready=(row.get('result') in ('Acceptable','Needs Review')),
+        tolerance_ready=tolerance_ready,tolerance_eligible=tolerance_eligible,approval_available=approval_available,
+        refresh_available=refresh_available,
+        review_stage_ready=review_stage_contract_ready(api),source_evidence_current=evidence_current,
+        display=display,inspection_ready=inspection_ready)
+
+def historical_review(api,row):
+    """Read-only saved history in the main workspace; never infer or authorize."""
+    left=api['parse_items'](row.get('pr_items') or '[]')
+    right=api['parse_items'](row.get('po_items') or '[]')
+    view=dict(row=row,pr={'no':row.get('pr_no') or 'Not recorded'},po={'no':row.get('po_no') or 'Not recorded'},
+        pr_items=left,po_items=right,display=verification_display(row,left,right),stale=True,
+        comparison={'rows':[],'technical_status':'NEEDS_REVIEW'},score_ready=False,
+        can_review_relationship=False,review_evidence_current=False,inspection_ready=False)
+    return render_template('revised_nlp.html',active='nlp',title='PR-PO Verification',historical=True,
+        prs=[],pos=[],rows=[],selected_pr=None,selected_po=None,verification=view,
+        model_state={'active':False,'message':'Historical saved result; read-only. No new verification or approval is performed.'})
+
+
+def modern_review(api,row):
+    if not enabled(api):return historical_review(api,row)
+    return redirect(url_for('nlp',verification_id=row['id']))
+
+def stored_review_matches(row,mapping,current):
+    """Confirmation cannot replace saved server compliance or correspondence."""
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else (row.get('details') or {})
+        saved=details.get('technical_comparison')
+        if (row.get('technical_status')!='MATCH' or type(saved) is not dict or type(current) is not dict
+                or type(mapping) is not list or not mapping):return False
+        for value in (saved,current):
+            if (value.get('technical_status')!='MATCH' or value.get('version')!='PR_PO_REVIEW_V1'
+                    or value.get('extra_or_unallocated_items')!=[]
+                    or value.get('missing_or_unresolved_pr_items')!=[]
+                    or type(value.get('rows')) is not list):return False
+        count=len(mapping)
+        if (len(saved['rows'])!=count or len(current['rows'])!=count
+                or any(type(value) is not int or not 1<=value<=count for value in mapping)
+                or len(set(mapping))!=count or type(saved.get('source_fields')) is not dict
+                or saved['source_fields']!=current.get('source_fields')):return False
+        for side in ('PR','PO'):
+            sources=saved['source_fields'].get(side)
+            if (type(sources) is not list or len(sources)!=count or
+                    any(type(entry) is not dict or not isinstance(entry.get('reference'),str)
+                        or not entry['reference'].strip() or type(entry.get('fields')) is not list
+                        or not entry['fields'] or any(not isinstance(field,str) or not field.strip()
+                            for field in entry['fields']) for entry in sources)):
+                return False
+            if len({entry['reference'] for entry in sources})!=count:return False
+        for position,(original,reviewed,target) in enumerate(zip(saved['rows'],current['rows'],mapping),1):
+            for value in (original,reviewed):
+                if (type(value) is not dict or type(value.get('pr_position')) is not int
+                        or type(value.get('po_position')) is not int or value['pr_position']!=position
+                        or value['po_position']!=target or type(value.get('checks')) is not list):return False
+            if (original.get('pr_reference')!=reviewed.get('pr_reference')
+                    or original.get('po_reference')!=reviewed.get('po_reference')
+                    or len(original['checks'])<2
+                    or json.dumps(original['checks'],sort_keys=True,default=str)!=json.dumps(reviewed['checks'],sort_keys=True,default=str)):
+                return False
+            if any(type(check) is not dict or check.get('state')!='MATCH'
+                   or check.get('conditional_on_identity') is not False
+                   or type(check.get('attribute')) is not str or not check['attribute'].strip()
+                   for check in original['checks']):return False
+        return True
+    except (ValueError,TypeError,AttributeError,KeyError):
+        return False
+
+
+def tolerance_review_matches(row,mapping,current):
+    """A final <=10% measured incidence permits manual policy approval only.
+
+    Classifier labels/confidence never enter this source-evidence check. A
+    pending finding, ambiguous correspondence or missing/extra line still fails.
+    """
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        saved=details.get('technical_comparison')
+        if type(saved) is not dict or type(current) is not dict or type(mapping) is not list or not mapping:return False
+        if row.get('technical_status')!=saved.get('technical_status'):return False
+        keys=('version','technical_status','rows','source_fields','missing_or_unresolved_pr_items',
+              'extra_or_unallocated_items','automatic_approval','human_review_required')
+        if any(saved.get(key)!=current.get(key) for key in keys):return False
+        count=len(mapping)
+        if (saved.get('version')!='PR_PO_REVIEW_V1' or saved.get('automatic_approval') is not False
+            or saved.get('human_review_required') is not True
+            or saved.get('technical_status') not in ('MATCH','NEEDS_REVIEW')
+            or saved.get('missing_or_unresolved_pr_items')!=[] or saved.get('extra_or_unallocated_items')!=[]
+            or type(saved.get('rows')) is not list or len(saved['rows'])!=count
+            or any(type(n) is not int or not 1<=n<=count for n in mapping) or len(set(mapping))!=count):return False
+        sources=saved.get('source_fields')
+        if type(sources) is not dict:return False
+        for side in ('PR','PO'):
+            entries=sources.get(side)
+            if (type(entries) is not list or len(entries)!=count
+                or any(type(entry) is not dict or not isinstance(entry.get('reference'),str)
+                       or not entry['reference'].strip() or type(entry.get('fields')) is not list
+                       or not entry['fields'] or any(not isinstance(f,str) or not f.strip() for f in entry['fields']) for entry in entries)
+                or len({entry['reference'] for entry in entries})!=count):return False
+        for position,(line,target) in enumerate(zip(saved['rows'],mapping),1):
+            if (type(line) is not dict or type(line.get('pr_position')) is not int or line['pr_position']!=position
+                or type(line.get('po_position')) is not int or line['po_position']!=target
+                or line.get('identity')!='EXACT_NAME'
+                or line.get('pr_reference')!=sources['PR'][position-1]['reference']
+                or line.get('po_reference')!=sources['PO'][target-1]['reference']
+                or type(line.get('checks')) is not list or len(line['checks'])<2):return False
+            if any(type(c) is not dict or c.get('state') not in ('MATCH','MISMATCH')
+                   or c.get('conditional_on_identity') is not False
+                   or not isinstance(c.get('attribute'),str) or not c['attribute'].strip() for c in line['checks']):return False
+        incidence=discrepancy_incidence(saved)
+        return (incidence.get('value') is not None and type(incidence.get('affected')) is int
+                and type(incidence.get('total')) is int and incidence['total']==count
+                and incidence['affected']*10<=incidence['total']
+                and all(value is not None for value in incidence.get('checks',{}).values())
+                and len(incidence.get('pairs',{}))==count
+                and all(value is not None for value in incidence['pairs'].values()))
+    except (ValueError,TypeError,AttributeError,KeyError,IndexError):return False
+
+
+def tolerance_approval_current(row,current):
+    """A persisted policy marker must retain exact source and comparison evidence."""
+    try:
+        details=json.loads(row.get('details') or '{}') if isinstance(row.get('details'),str) else row.get('details')
+        marker=details.get('threshold_approval_v4')
+        mapping=[line.get('po_position') for line in current['rows']]
+        incidence=discrepancy_incidence(current)
+        return (type(marker) is dict and marker.get('version')==1
+                and type(marker.get('percentage')) in (int,float)
+                and marker['percentage']==incidence['value']
+                and marker.get('technical_comparison')==details.get('technical_comparison')
+                and marker.get('pr_items_hash')==row.get('pr_items_hash')
+                and marker.get('po_items_hash')==row.get('po_items_hash')
+                and tolerance_review_matches(row,mapping,current))
+    except (ValueError,TypeError,AttributeError,KeyError):return False
+
+
+def approve_verification(api,row):
+    if request.form.get('review_confirm')!='yes' or request.form.get('final_confirm')!='yes':
+        abort(400,description='Explicit review and relationship confirmation are required.')
+    pr,po=source_pair(api,row['pr_id'],row['po_id'])
+    if not relationship_review_allowed(api,po):abort(403,description='Relationship authorization is unavailable for this account or policy.')
+    if row.get('result') not in ('Acceptable','Needs Review'):
+        abort(422,description='This model result requires corrective procurement action before relationship approval.')
+    try:
+        mapping=[identifier(value) for value in request.form.getlist('match_po_position')]
+        technical=comparison(api,pr,po,manual_mapping=mapping)
+    except ValueError:abort(422,description='Provide one unique corresponding PO item for every PR item.')
+    if technical['technical_status']!='MATCH':
+        abort(422,description='Technical, quantity, missing or extra-item findings remain unresolved. No relationship or PO was approved.')
+    if not stored_review_matches(row,mapping,technical):
+        abort(422,description='Saved server technical evidence does not authorize this correspondence. Confirmation cannot upgrade or replace unresolved verification evidence.')
+    receipt=rpc(api,'review_approved_pr_po_verification_v2' if row.get('workflow_version')==2 else 'review_pr_po_verification_v1',(row['id'],json.dumps(mapping),json.dumps(technical,default=str),
+        request.form.get('relationship_reason',''),request.form.get('evidence_reference',''),True))
+    if not isinstance(receipt,dict):return receipt
+    if row.get('workflow_version')==2:
+        if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id']:abort(503)
+        flash('PR-PO relationship approved and recorded. Receiving remains subject to the existing IAR eligibility checks.')
+        return redirect(url_for('iar',po_id=row['po_id']))
+    flash('PR-PO relationship authorized and recorded. Final PO approval remains a separate explicit action.')
+    return redirect(url_for('nlp',verification_id=row['id']))
+
+def approve_aoq(api,identifier_value):
+    guard=api['require_review_confirmation']('aoq_review',identifier_value)
+    if guard:return guard
+    if request.form.get('final_confirm')!='yes':abort(400,description='Explicit final approval confirmation is required.')
+    receipt=rpc(api,'approve_reviewed_aoq_v1',(identifier_value,True,True))
+    if not isinstance(receipt,dict):return receipt
+    if receipt.get('aoq_id')!=identifier_value or receipt.get('new_status')!='Approved':abort(503)
+    flash('AOQ approved. Its reviewed quotation is available for PO generation.')
+    return redirect(url_for('aoq',aoq_id=identifier_value))
+
+def create_po(api,identifier_value):
+    receipt=rpc(api,'create_po_for_review_v2',(identifier(identifier_value),))
+    if not isinstance(receipt,dict):return receipt
+    if type(receipt.get('created')) is not bool or type(receipt.get('po_id')) is not int or receipt['po_id']<=0:abort(503)
+    flash('PO saved for review.' if receipt['created'] else 'The existing PO was reopened; no duplicate was created.')
+    return redirect(url_for('po'))
+
+def create_pr(api,identifier_value,purpose=None):
+    import unicodedata
+    purpose='' if purpose is None else purpose
+    if not isinstance(purpose,str) or len(purpose)>2000 or any(unicodedata.category(char)=='Cc' and char not in '\n\r\t' for char in purpose):
+        abort(422,description='Enter a valid purpose of at most 2,000 characters.')
+    row=api['q']("""select a.items,a.total,m.items ppmp_items from app_plan a join ppmp m on m.id=a.ppmp_id
+        where a.id=? and a.status='Approved' and m.status='Approved'""",(identifier(identifier_value),),one=True)
+    if not row:abort(409,description='Select an Approved APP and its approved source PPMP.')
+    raw=row.get('items') or row.get('ppmp_items');items=api['parse_items'](raw)
+    errors=api['planning_item_errors'](items) if items else ['No approved APP items were found.']
+    if errors:abort(422,description='Cannot create Purchase Request: '+' '.join(errors))
+    total=api['items_total'](items)
+    if total is None or total<=0:total=api['parse_currency_decimal'](row['total'])
+    if total is None or total<=0:abort(422,description='The approved APP total is invalid.')
+    receipt=rpc(api,'create_pr_from_approved_app_v1',(identifier(identifier_value),purpose.strip(),evidence.fingerprint(raw),float(total)))
+    if not isinstance(receipt,dict):return receipt
+    flash('Purchase Request saved For Review.' if receipt['created'] else 'The existing Purchase Request was reopened; no duplicate was created.')
+    return redirect(url_for('pr_review',id=receipt['pr_id']))
+
+def approve_pr(api,identifier_value):
+    guard=api['require_review_confirmation']('pr_review',identifier_value)
+    if guard:return guard
+    receipt=rpc(api,'approve_pr_v1',(identifier_value,True))
+    if not isinstance(receipt,dict):return receipt
+    flash('Purchase Request approved. Its original items remain available for PR-PO verification.')
+    return redirect(url_for('pr_review',id=identifier_value))
+
+def approve_po(api,identifier_value):
+    guard=api['require_review_confirmation']('po_review',identifier_value)
+    if guard:return guard
+    if request.form.get('final_confirm')!='yes':abort(400,description='Explicit final approval confirmation is required.')
+    # The final workflow no longer uses NLP approval as PO approval. A new
+    # private RPC must lock/recheck the AOQ, reviewed lines, actor and status.
+    # Never fall back to the old pre-verification contract or direct UPDATE.
+    if not final_contract_ready(api):abort(409,description='PO approval requires the reviewed source-tracking v3 database installation. No status was changed.')
+    receipt=rpc(api,'approve_po_before_verification_v3',(identifier_value,True,True))
+    if not isinstance(receipt,dict):return receipt
+    if receipt.get('po_id')!=identifier_value or receipt.get('new_status')!='Approved':abort(503)
+    flash('PO approved. It is available for PR–PO NLP verification; receiving eligibility remains separately protected.')
+    return redirect(url_for('po',po_id=identifier_value))
+
+def po_has_review(api,po_id):
+    row=api['q']("""select exists(select 1 from psms_documents.pr_po_reviews r
+        join nlp n on n.id=r.nlp_id where r.po_id=? and n.status='Approved') ready""",(po_id,),one=True)
+    return bool(row and row['ready'])
+
+def upload_aoq(api):
+    """Optional legacy PR association, never a source of quotation item content."""
+    from private_document_uploads import validate,extraction_path
+    from nlp_runtime_selection import require_available
+    require_available(api['app'].config)
+    raw_pr=(request.form.get('pr_id') or '').strip()
+    pr_id=identifier(raw_pr) if raw_pr else None
+    pr=api['q']("select id,no,status,items from pr where id=? and status='Approved'",(pr_id,),one=True) if pr_id else None
+    if pr_id and not pr:abort(400,description='The optional linked PR must be Approved.')
+    name,extension,content=validate(request.files.get('ocr_file'))
+    digest=hashlib.sha256(content).hexdigest();durable=api['durable_ocr']
+    lookup="""select d.id,d.status,d.official_aoq_id from psms_documents.aoq_drafts d
+      join psms_documents.sources s on s.id=d.source_id
+      where d.owner_id=? and d.pr_id is not distinct from ?::bigint and s.sha256=? and d.status<>'CANCELLED'
+      order by d.created_at limit 1"""
+    def existing_response(row):
+        return redirect(url_for('aoq_review',id=row['official_aoq_id']) if row['status']=='CONFIRMED'
+                        else url_for('aoq',draft_id=str(row['id'])))
+    row=api['q'](lookup,(durable._uid(),pr_id,digest),one=True)
+    if row:return existing_response(row)
+    with extraction_path(content,extension) as path:
+        document=api['extract_aoq_document'](path)
+        from aoq_workspace import validate_document
+        try:validate_document(document)
+        except ValueError as error:abort(422,description=str(error))
+        preview=api['build_flexible_aoq_preview'](document,[])
+    if len(preview.get('offer_items') or [])>200 or len(preview.get('suppliers') or [])>100:abort(400)
+    preview.update(pr_id=pr_id,pr_no=pr['no'] if pr else '',ocr_filename=name,stored_filename='',
+        offer_review_token=secrets.token_urlsafe(24),source_award_hint=preview.get('winner_index',-1),
+        selected_winner_index=-1,offer_items=[],offer_supplier_index='')
+    # Open the first actual quotation for review, never select its winner.
+    first=next((i for i,s in enumerate(preview.get('suppliers') or []) if s.get('items')),None)
+    if first is not None:
+        preview.update(offer_items=[dict(item) for item in preview['suppliers'][first]['items']],offer_supplier_index=str(first))
+    did=str(uuid.uuid4())
+    with durable.transaction(api,read_committed=True) as (con,uid):
+        con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',
+            ('AOQ-UPLOAD:'+str(uid)+':'+str(pr_id)+':'+digest,))
+        row=con.execute(lookup,(uid,pr_id,digest)).fetchone()
+        if row:return existing_response(row)
+        if pr_id:
+            current=con.execute("select id from pr where id=? and status='Approved'",(pr_id,)).fetchone()
+            if not current or con.execute('select 1 from aoq where pr_id=?',(pr_id,)).fetchone():
+                abort(409,description='This linked PR changed or already has an AOQ.')
+        sid=durable.source(con,uid,'aoq',None,name,extension,content,document)
+        con.execute('insert into psms_documents.aoq_drafts(id,owner_id,source_id,pr_id,payload) values(?,?,?,?,?::jsonb)',
+            (did,uid,sid,pr_id,durable.payload(preview)))
+        durable.audit(api,con,'Extracted Private OCR Draft','AOQ',did)
+    from flask import session
+    session['aoq_draft_id']=did
+    flash('AOQ extraction saved privately. Review its actual quotations and explicitly select one supplier.')
+    return redirect(url_for('aoq',draft_id=did))
+
+
+def final_contract_ready(api):
+    """Additive v2 contract only; old routines and their pins remain unchanged."""
+    if has_request_context() and hasattr(g,'final_procurement_ready'):return g.final_procurement_ready
+    names=('approve_po_before_verification_v3','save_approved_pr_po_verification_v2')
+    if any(not re.fullmatch('[0-9a-f]{32}',FINAL_ROUTINE_MD5.get(name,'')) for name in names):return False
+    signatures=[api_schema()+'.'+name+'('+','.join(RPC[name])+')' for name in names]
+    sql="""select count(*)=2 as ready from pg_catalog.pg_proc p
+      join pg_catalog.pg_roles owner on owner.oid=p.proowner
+      where p.oid in (to_regprocedure(?),to_regprocedure(?))
+      and p.prosecdef and owner.rolname='psms_aoq_approval_owner'
+      and not owner.rolcanlogin and not owner.rolsuper and not owner.rolbypassrls
+      and 'row_security=on'=any(p.proconfig)
+      and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+      and has_function_privilege(current_user,p.oid,'EXECUTE')
+      and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=
+        case when p.oid=to_regprocedure(?) then ? else ? end
+      and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+        where a.privilege_type='EXECUTE' and a.grantee not in
+          (p.proowner,coalesce((select oid from pg_catalog.pg_roles where rolname='psms_vercel_backend'),0)))"""
+    con=None
+    try:
+        con=api['conn']();con.execute('SET TRANSACTION READ ONLY');con.execute("SET LOCAL statement_timeout='3s'")
+        row=con.execute(sql,tuple(signatures)+(signatures[0],*(FINAL_ROUTINE_MD5[name] for name in names))).fetchone();ready=bool(row and row.get('ready') is True)
+    except Exception:ready=False
+    finally:
+        if con is not None:
+            try:con.rollback()
+            finally:con.close()
+    if has_request_context():g.final_procurement_ready=ready
+    return ready
+
+
+# Strict LF-normalized proposed SQL source pins; absent/mismatched routines fail closed.
+FINAL_ROUTINE_MD5={
+ 'approve_po_before_verification_v2':'78b71630fef5e136daf21315dc4c491c',
+ 'approve_po_before_verification_v3':'c267a3f3e0cd74cf76663546402d2c1f',
+ 'save_approved_pr_po_verification_v2':'52ad5a0db477be37f94b0517236cd68e',
+ 'save_approved_pr_po_verification_v3':'3c7203e69e3203e0ca90f198c403e5ab',
+ 'review_approved_pr_po_verification_v2':'1ffa25321ca839f203d061983ce25843',
+ 'save_selected_aoq_independent_v2':'d0b92df38409db6b832b088e7b0b81e1'}

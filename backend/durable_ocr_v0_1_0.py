@@ -1,0 +1,740 @@
+import revised_procurement_v1 as revised_procurement
+"""Owner-bound PostgreSQL OCR review; no user payload in globals/cookies/files."""
+from contextlib import contextmanager
+import hashlib,json,re,secrets,uuid
+from flask import abort,flash,redirect,request,session,url_for,Response,jsonify,current_app,g
+from werkzeug.exceptions import HTTPException
+import server_sessions_v0_1_0 as sessions
+from private_document_uploads import validate,extraction_path,ALLOWED
+
+def register(app):
+    @app.after_request
+    def remove_obsolete_ocr_cookie_payloads(response):
+        # Existing signed cookies may predate durable review. Remove only the
+        # retired OCR payload/path keys; preserve authentication and CSRF state.
+        for key in ('ocr_text','ocr_method','ppmp_ocr_token','aoq_preview_file','aoq_ocr_data'):
+            if key in session:session.pop(key)
+        return response
+
+def _uid():
+    uid=session.get('user_id')
+    if type(uid) is not int or uid<=0:abort(403)
+    return uid
+
+def _active(con):
+    uid=_uid(); digest=sessions.token_hash(session.get(sessions.COOKIE_KEY))
+    if not digest:abort(403)
+    sessions._ready(con)
+    user=con.execute("select id from users where id=? and status='Active' and role in ('Admin','Staff','Inspector') for share",(uid,)).fetchone()
+    token=con.execute('select user_id from auth_sessions where user_id=? and token_hash=? and revoked_at is null and expires_at>clock_timestamp() for share',(uid,digest)).fetchone()
+    if not user or not token:abort(403)
+    return uid
+
+@contextmanager
+def transaction(api, *, read_committed=False):
+    con=api['conn']()
+    try:
+        if read_committed:
+            # A creator waiting on a parent must see the preceding creator's
+            # committed child in its subsequent existence statement.
+            con.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+        uid=_active(con)
+        revised_procurement.apply_release_context(con)
+        con.execute("select set_config('psms.workbook_actor',?,true)",
+                    (json.dumps(dict(uid=uid,sid=sessions.token_hash(session.get(sessions.COOKIE_KEY)))),))
+        yield con,uid
+        con.commit()
+    except Exception:con.rollback();raise
+    finally:con.close()
+
+def revision(value):
+    if not re.fullmatch(r'[1-9][0-9]{0,18}',str(value or '')):abort(400,description='Reopen the review form before saving.')
+    return int(value)
+
+def payload(value):
+    text=json.dumps(value,ensure_ascii=False,default=str)
+    if len(text.encode('utf-8'))>4*1024*1024:abort(400,description='Extracted document exceeds the review limit.')
+    return text
+
+def audit(api,con,action,module,ref):
+    api['log'](action,module,str(ref),'Private document review operation',connection=con)
+
+def source(con,uid,kind,category,name,ext,content,state):
+    sid=str(uuid.uuid4())
+    con.execute('''insert into psms_documents.sources(id,owner_id,kind,category,filename,extension,content,sha256,extraction)
+        values(?,?,?,?,?,?,?,?,?::jsonb)''',(sid,uid,kind,category,name,ext,content,hashlib.sha256(content).hexdigest(),payload(state)))
+    return sid
+
+def _existing_upload(con, uid, ptype, digest):
+    # Parser upgrades, reviewed/converted/cancelled drafts and zero-row sources
+    # do not turn the same bytes into an ordinary first-time upload.
+    return con.execute('''select s.id from psms_documents.sources s where s.owner_id=? and s.kind='ppmp'
+        and s.category=? and s.sha256=? order by s.created_at desc limit 1''', (uid,ptype,digest)).fetchone()
+
+
+def _existing_response(ptype, existing):
+    session['ppmp_ocr_source'] = str(existing['id'])
+    flash('This file has already been uploaded and extracted. Please check the existing OCR records.')
+    return redirect(url_for('ppmp_type',ptype=ptype,ocr_source=str(existing['id'])))
+
+
+def ppmp_duplicate_check(api, ptype):
+    """Advisory UI check; the upload independently hashes validated source bytes."""
+    if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
+    digest = request.form.get('sha256', '')
+    name = request.form.get('filename', '')
+    if not re.fullmatch(r'[0-9a-f]{64}', digest) or not name or len(name)>120 or any(c in name for c in ('/', '\\', '\x00')) or any(ord(c)<32 for c in name):
+        abort(400)
+    from pathlib import Path
+    if Path(name).suffix.lower() not in ALLOWED:
+        result = dict(status='unsupported',message='Unsupported file format. Please select a supported procurement document.')
+    else:
+        with transaction(api) as (con,uid):
+            existing = _existing_upload(con,uid,ptype,digest)
+            from ppmp_creation import repeat_sources_enabled
+            allow_repeat = bool(existing) and repeat_sources_enabled(api, con)
+            same_name = None if existing else con.execute('''select id from psms_documents.sources
+                where owner_id=? and kind='ppmp' and category=? and lower(filename)=lower(?) limit 1''', (uid,ptype,name)).fetchone()
+        if existing:
+            result = dict(status='repeat_allowed' if allow_repeat else 'duplicate',
+                message='Testing Mode: This file was uploaded previously. Re-extraction is allowed.' if allow_repeat else
+                        'This file has already been uploaded and extracted. Please check the existing OCR records.',
+                existing_url=url_for('ppmp_type',ptype=ptype,ocr_source=str(existing['id'])))
+        elif same_name:
+            result = dict(status='same_name',message='An existing file has the same name, but its contents are different.')
+        else:
+            result = dict(status='new',message='File is ready for extraction.')
+    response = jsonify(result)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
+def _reprocess_nonce(api, con, uid, ptype):
+    from ppmp_creation import repeat_sources_enabled, _signer
+    from itsdangerous import BadData
+    if request.form.get('reprocess_confirmed') != 'yes' or not repeat_sources_enabled(api, con):abort(403)
+    try:token = _signer().loads(request.form.get('creation_token',''),max_age=3600)
+    except BadData:abort(400)
+    if (not isinstance(token,dict) or token.get('uid')!=uid or token.get('category')!=ptype or
+        token.get('session')!=sessions.token_hash(session.get(sessions.COOKIE_KEY)) or
+        not re.fullmatch(r'[0-9a-f]{48}',str(token.get('nonce','')))):abort(403)
+    return token['nonce']
+
+
+def ppmp_upload(api,ptype,reprocess=False):
+    g.document_stage='validation'
+    from nlp_runtime_selection import require_available
+    require_available(getattr(api.get('app'),'config',{}))
+    if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
+    # The normal upload button uses the same verified, signed, idempotent test
+    # path as /reprocess_ocr. A posted confirmation never grants permission.
+    reprocess = reprocess or request.form.get('reprocess_confirmed') == 'yes'
+    name,ext,content=validate(request.files.get('ocr_file'))
+    digest=hashlib.sha256(content).hexdigest()
+    g.document_stage='source_lookup'
+    with transaction(api) as (con,uid):
+        nonce = _reprocess_nonce(api,con,uid,ptype) if reprocess else None
+        existing = _existing_upload(con,uid,ptype,digest)
+        if reprocess and not existing:abort(409,description='Reprocessing requires an existing extraction in your category.')
+        if existing and not reprocess:return _existing_response(ptype,existing)
+        if not reprocess:
+            prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
+            if prior:
+                return _existing_response(ptype,prior)
+    with extraction_path(content,ext) as path:
+        g.document_stage='extraction'
+        extracted=api['extract_aoq_document'](path)
+        extracted['filename']=name
+        g.document_stage='mapping'
+        structured=api['map_ppmp_ocr_document'](extracted)
+    if not (structured.get('model') or {}).get('active'):
+        # Fixed codes only: never return dependency exceptions, paths or source text.
+        code = (structured.get('model') or {}).get('diagnostic_code')
+        allowed = {'SEMANTIC_ARTIFACTS_MISSING', 'SEMANTIC_DEPENDENCY_MISSING', 'SEMANTIC_MODEL_LOAD_FAILED',
+                   'SEMANTIC_RELEASE_INVALID', 'RELEASE_ACTIVATION_BLOCKED', 'RELEASE_ARTIFACT_MISSING',
+                   'RELEASE_CHECKSUM_MISMATCH', 'RELEASE_DEPENDENCY_VERSION', 'RELEASE_PYTHON_VERSION',
+                   'RELEASE_LINUX_UNVERIFIED', 'RELEASE_NOT_TRUSTED', 'RELEASE_MANIFEST_NOT_PINNED',
+                   'RELEASE_PROFILE_PATH', 'RELEASE_METADATA_INVALID'}
+        response = Response('The installed semantic model is unavailable. No official record was saved.',
+                            status=503, mimetype='text/plain')
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-PSMS-Diagnostic'] = code if code in allowed else 'SEMANTIC_UNAVAILABLE'
+        return response
+    rows=structured.get('rows') or []
+    detected_category=(structured.get('document_metadata') or {}).get('category')
+    row_categories={row.get('field_confidence',{}).get('_document_metadata',{}).get('category') for row in rows}
+    if (detected_category and detected_category!=ptype) or any(category and category!=ptype for category in row_categories):
+        categories = {category for category in row_categories | {detected_category} if category}
+        if len(categories) == 1 and next(iter(categories)) in ('DBM','NON-DBM','LIB'):
+            correct = next(iter(categories))
+            message = (f'This source is {correct}, but this upload page is {ptype}. '
+                       f'Open PPMP > {correct} ({url_for("ppmp_type",ptype=correct)}) and upload the original document there. ')
+        else:
+            message = 'This source contains conflicting PPMP categories. Separate DBM and NON-DBM worksheets and upload each in its matching PPMP category. '
+        from ppmp_intake import save_extraction
+        flash(message+'Saved category assignments were preserved; only this page\'s items appear below. Use Source Document Review separately for classification.','info')
+        return save_extraction(api,name,ext,content,extracted,structured,return_category=ptype)
+    if len(rows)>200:abort(400,description='Review at most 200 extracted rows per upload.')
+    state=dict(text=str(extracted.get('raw_text') or ''),method=extracted.get('extraction_method') or 'document extraction',
+        warnings=structured.get('warnings') or [],filename=name,structured=structured,item_count=len(rows),extraction_timestamp=api['now']())
+    g.document_stage='draft_persistence'
+    with transaction(api) as (con,uid):
+        # Serialize identical uploads by owner/category even across processes.
+        con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',(f'ppmp-intake:{uid}:{digest}',))
+        existing=_existing_upload(con,uid,ptype,digest)
+        if not reprocess and not existing:
+            prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
+            if prior:return _existing_response(ptype,prior)
+        if reprocess:
+            _reprocess_nonce(api,con,uid,ptype)
+            con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',('ppmp-reprocess:'+nonce,))
+            previous=con.execute("select details from audit_trail where action='Reprocessed Private OCR Draft' and module='PPMP' and ref=?",(nonce,)).fetchone()
+            if previous:
+                prior_digest, prior_sid = previous['details'].split(':',1)
+                if prior_digest != digest:abort(409)
+                return _existing_response(ptype,dict(id=prior_sid))
+            state['reprocess_of'] = str(existing['id'])
+        elif existing:return _existing_response(ptype,existing)
+        sid=source(con,uid,'ppmp',ptype,name,ext,content,state)
+        for row in rows:
+            row.setdefault('field_confidence', {})['_original_fields'] = dict(row.get('fields') or {})
+            did=con.execute('''insert into ppmp_ocr_drafts(upload_token,temp_code,ppmp_category,fields_json,confidence_json,average_confidence,
+                source_filename,raw_ocr_text,extraction_method,status,reviewed,created_by,created_at,updated_at,owner_id,source_id)
+                values(?,?,?,?,?,?,?,?,?,'NEEDS_REVIEW',false,?,?,?,?,?) returning id''',
+                (sid,'OCR-'+str(uuid.uuid4()),ptype,payload(row.get('fields') or {}),payload(row.get('field_confidence') or {}),
+                 float(row.get('average_confidence') or 0),name,state['text'],state['method'],session['username'],api['now'](),api['now'](),uid,sid)).fetchone()['id']
+            con.execute('update ppmp_ocr_drafts set temp_code=? where id=?',(f'OCR-TEMP-{did:06d}',did))
+        audit(api,con,'Extracted Private OCR Draft','PPMP',sid)
+        if reprocess:
+            api['log']('Reprocessed Private OCR Draft','PPMP',nonce,digest+':'+sid,connection=con)
+    session['ppmp_ocr_source']=sid
+    flash('Extraction saved as private temporary rows. Review/edit, then explicitly confirm to create official PPMP records.' if rows else
+          'No reliable item rows were identified. Source text and uncertain regions were retained for review; no item drafts were created.')
+    return redirect(url_for('ppmp_type',ptype=ptype,ocr_source=sid))
+
+def ppmp_state(api,ptype=None):
+    params=[_uid()];where='owner_id=? and kind=\'ppmp\''
+    requested=request.args.get('ocr_source','latest')
+    # An explicit owner-bound source may contain mixed/other categories. Show
+    # its status without moving its drafts; ppmp_rows still enforces ptype.
+    if ptype and requested in ('latest','all'):
+        where+=" and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and ((d.ppmp_category=? and d.status in ('NEEDS_REVIEW','REVIEWED','CONVERTED_TO_PPMP')) or (d.ppmp_category='UNASSIGNED' and d.status='CATEGORY_REVIEW'))))"
+        params.extend((ptype,_uid(),ptype))
+    if requested not in ('latest','all'):
+        try:requested=str(uuid.UUID(requested))
+        except ValueError:abort(400)
+        where+=' and id=?';params.append(requested)
+    row=api['q']("select extraction,id,(select count(*) from ppmp_ocr_drafts pending where pending.source_id=psms_documents.sources.id and pending.owner_id=psms_documents.sources.owner_id and pending.status='CATEGORY_REVIEW') as classification_pending_count from psms_documents.sources where "+where+' order by created_at desc limit 1',params,one=True)
+    if not row and requested not in ('latest','all'):abort(404)
+    if not row:return None
+    import document_processing
+    state,_=document_processing.latest(api,str(row['id']),row['extraction'])
+    return dict(state,source_id=str(row['id']),classification_pending_count=int(row.get('classification_pending_count') or 0))
+
+_STATE_UNSET = object()
+
+
+def ppmp_item_filters():
+    """Read-only category-list filters; never submitted review/approval evidence."""
+    names=('item_q','item_review','item_sort','item_source')
+    if any(len(request.args.getlist(name))>1 for name in (*names,'ocr_page')):abort(400)
+    values={name:request.args.get(name,'').strip() for name in names}
+    values['item_sort']=values['item_sort'] or 'source'
+    if (len(values['item_q'])>160 or values['item_review'] not in ('','NEEDS_REVIEW','REVIEWED')
+            or values['item_sort'] not in ('source','name','name_desc')
+            or values['item_source'] not in ('','extracted','workbook')):
+        abort(400,description='Choose valid PPMP item filters and sort.')
+    return values
+
+
+def ppmp_rows(api,ptype,state=_STATE_UNSET):
+    filters=ppmp_item_filters()
+    page=revision(request.args.get('ocr_page','1'))
+    if page>100000:abort(400)
+    if filters['item_source']=='workbook':
+        g.psms_draft_pagination=dict(page=page,total=0,has_next=False)
+        return []
+    if state is _STATE_UNSET:state=ppmp_state(api,ptype)
+    where="owner_id=? and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
+    params=[_uid(),ptype]
+    if state and state.get('classification_pending_count',0)>0:
+        where="owner_id=? and ((ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')) or (ppmp_category='UNASSIGNED' and status='CATEGORY_REVIEW' and source_id=?))"
+        params.append(state['source_id'])
+    selected=request.args.get('ocr_source','all')!='all' and state
+    if selected:where+=' and source_id=?';params.append(state['source_id'])
+    fields="(CASE WHEN fields_json IS JSON OBJECT THEN fields_json::jsonb ELSE '{}'::jsonb END)"
+    if filters['item_review']=='REVIEWED':
+        where+=' and status=? and reviewed IS TRUE';params.append('REVIEWED')
+    elif filters['item_review']=='NEEDS_REVIEW':
+        where+=' and (status=? or reviewed IS NOT TRUE)';params.append('NEEDS_REVIEW')
+    if filters['item_q']:
+        visible=('Item Name','General Description and Objective of the Project to be Procured',
+                 'Quantity and Size of the Project to be Procured','Quantity','Unit','Estimated Unit Cost','Item Number')
+        where+=" and strpos(lower(concat_ws(' ',temp_code,"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
+        params.append(filters['item_q'])
+    count=api['q']('select count(*) total from ppmp_ocr_drafts where '+where,params,one=True)
+    if not count or type(count.get('total')) is not int or count['total']<0:
+        abort(503,description='The matching draft count could not be confirmed. No items were changed.')
+    order='id '+('asc' if selected else 'desc')
+    if filters['item_sort']!='source':
+        order="lower(coalesce(nullif("+fields+"->>'Item Name',''),"+fields+"->>'General Description and Objective of the Project to be Procured','')) "+('desc' if filters['item_sort']=='name_desc' else 'asc')+',id'
+    g.psms_draft_pagination=dict(page=page,total=count['total'],has_next=page*200<count['total'])
+    rows=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+order+' limit 200 offset ?',(*params,(page-1)*200))
+    return [api['_ocr_draft_to_ui'](row) for row in rows]
+
+def _ppmp_locked(con,uid,ptype,temp_id,allow_category_review=False):
+    row=con.execute('select * from ppmp_ocr_drafts where temp_code=? and ppmp_category=? and owner_id=? for update',(temp_id,ptype,uid)).fetchone()
+    if not row and isinstance(temp_id,str) and re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id):
+        # Older rows can have no stored code. Resolve exactly the fallback
+        # identifier already displayed by _ocr_draft_to_ui, with the same
+        # owner/category checks and row lock. Never replace a populated code.
+        did=int(temp_id.removeprefix('OCR-TEMP-'))
+        if 0<did<=9223372036854775807 and temp_id==f'OCR-TEMP-{did:06d}':
+            row=con.execute("select * from ppmp_ocr_drafts where id=? and (temp_code is null or temp_code='') and ppmp_category=? and owner_id=? for update",(did,ptype,uid)).fetchone()
+    if not row and allow_category_review:
+        row=con.execute("select * from ppmp_ocr_drafts where temp_code=? and owner_id=? and ppmp_category='UNASSIGNED' and status='CATEGORY_REVIEW' for update",(temp_id,uid)).fetchone()
+    if not row:
+        if getattr(g,'document_stage',None)=='creation_draft_lock':
+            creation_item_error(temp_id,'This saved item is unavailable in this category for your account. Reopen its latest review before creating a PPMP.',404)
+        abort(404)
+    if row['status']=='CATEGORY_REVIEW' and not allow_category_review:
+        abort(409,description='Confirm the item category in Document Upload and Review before reviewing or saving this draft.')
+    return row
+
+
+def ppmp_batch_review(api,ptype):
+    """Validate every selected owner-bound draft, then save all in one transaction."""
+    text=request.form.get('ocr_batch','')
+    if len(text.encode('utf-8'))>2*1024*1024:abort(400,description='Batch exceeds the review limit.')
+    try:entries=json.loads(text)
+    except (ValueError,TypeError):abort(400,description='Invalid review batch.')
+    if not isinstance(entries,list) or not 1<=len(entries)<=200:abort(400,description='Select 1 to 200 drafts on this page.')
+    labels=api['ppmp_review_labels']()
+    unique={}
+    for entry in entries:
+        if not isinstance(entry,dict):abort(400)
+        code=entry.get('temp_id');fields=entry.get('fields')
+        if not isinstance(code,str) or not re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',code):abort(400)
+        if not isinstance(fields,dict) or set(fields)!=set(labels):abort(400,description='Submit every review field for each item.')
+        if any(not isinstance(value,str) or len(value)>5000 for value in fields.values()):abort(400,description='Each field must contain at most 5000 characters.')
+        revision(entry.get('revision'))
+        if code in unique and unique[code]!=entry:abort(400,description='Conflicting duplicate draft entries.')
+        unique[code]=entry
+    errors={};saved=[]
+    with transaction(api) as (con,uid):
+        pending=[]
+        for code,entry in sorted(unique.items()):
+            row=_ppmp_locked(con,uid,ptype,code,allow_category_review=entry.get('confirmed_category')==ptype)
+            if row['converted'] or row['status'] in ('CONVERTED_TO_PPMP','CANCELLED') or row['revision']!=revision(entry['revision']):
+                return jsonify(saved=False,errors={code:['This draft changed, was cancelled, or became official. Reopen its latest saved review.']},
+                    message='No items saved. Your corrections remain in this review; compare them with the latest saved revision.'),409
+            fields=api['normalize_reviewed_ocr_fields'](entry['fields'])
+            try:api['validated_ppmp_item_from_review'](fields,ptype)
+            except ValueError as error:errors[code]=[str(error)]
+            before=api['_json_dict'](row['fields_json'])
+            confidence=api['_json_dict'](row['confidence_json'])
+            original=confidence.get('_original_fields') or before
+            from procurement_item_contract import decimal_number
+            quantity_previously_confirmed = (row['reviewed'] and (confidence.get('Quantity') or {}).get('human_confirmed') is True
+                and decimal_number(fields.get('Quantity')) == decimal_number(before.get('Quantity')))
+            if decimal_number(fields.get('Quantity')) != decimal_number(original.get('Quantity')) and not quantity_previously_confirmed and entry.get('source_changes_confirmed') is not True:
+                errors.setdefault(code,[]).append('Quantity differs from the extracted source. Confirm the intentional source difference for this item.')
+            pending.append((code,row,fields))
+        if errors:
+            return jsonify(saved=False,errors=errors,message='No items saved. Correct the marked items.'),422
+        for code,row,fields in pending:
+            confidence=api['_json_dict'](row['confidence_json']);before=api['_json_dict'](row['fields_json'])
+            confidence.setdefault('_original_fields',dict(before))
+            assigning=row['status']=='CATEGORY_REVIEW'
+            if assigning:
+                confidence['_category_confirmed']=True
+                confidence['_category_review']=dict(previous=row['ppmp_category'],assigned=ptype,by=uid,at=api['now']())
+                confidence.setdefault('_review_history',[]).append(dict(revision=row['revision'],previous_category=row['ppmp_category'],category=ptype,
+                    by=uid,at=api['now'](),before_fields=before,after_fields=dict(fields)))
+            for label in labels:
+                if fields[label]!=before.get(label):
+                    previous=dict(confidence.get(label) or {})
+                    previous.update(human_corrected=True,human_confirmed=True,level='Human corrected',source_match=False)
+                    confidence[label]=previous
+            if assigning:
+                con.execute("update ppmp_ocr_drafts set ppmp_category=? where id=?",(ptype,row['id']))
+                audit(api,con,'Assigned Reviewed Item Category','PPMP',row['id'])
+            con.execute('''update ppmp_ocr_drafts set fields_json=?,confidence_json=?,status='REVIEWED',reviewed=true,
+                reviewed_by=?,reviewed_at=?,updated_at=?,revision=revision+1 where id=?''',
+                (payload(fields),payload(confidence),session['username'],api['now'](),api['now'](),row['id']))
+            audit(api,con,'Reviewed Private OCR Draft','PPMP',code)
+            saved.append(dict(temp_id=code,revision=row['revision']+1,fields=fields,field_confidence=confidence,status='Reviewed'))
+    response=jsonify(saved=True,items=saved,message='All selected reviews saved. Official creation and procurement approval remain separate.')
+    response.headers['Cache-Control']='private, no-store'
+    return response
+
+
+def ppmp_source(api,ptype,sid,diagnostics=False):
+    """Original private bytes or administrator diagnostics, checked per request."""
+    if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
+    if diagnostics and not api['is_admin']():abort(403)
+    row=api['q']("select filename,extension,content,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and (d.ppmp_category=? or (d.ppmp_category='UNASSIGNED' and d.status='CATEGORY_REVIEW'))))",
+                 (str(sid),_uid(),ptype,_uid(),ptype),one=True)
+    if not row:abort(404)
+    if diagnostics:
+        from flask import make_response
+        response=make_response(api['render_template']('ppmp_source_diagnostics.html',source=row,ptype=ptype,active='ppmp'))
+    else:
+        from io import BytesIO
+        from flask import send_file
+        ext=row['extension']
+        mime={'.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.bmp':'image/bmp'}
+        response=send_file(BytesIO(bytes(row['content'])),mimetype=mime.get(ext,'application/octet-stream'),
+                           download_name='source-document'+ext,as_attachment=ext not in mime,max_age=0)
+        response.headers['Content-Security-Policy']="sandbox; default-src 'none'"
+    response.headers.update({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'})
+    return response
+
+def ppmp_post(api,ptype):
+    if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
+    action=request.form.get('action')
+    if action=='update_ocr_rows':return ppmp_batch_review(api,ptype)
+    if action=='clear_ocr':
+        state=ppmp_state(api,ptype)
+        if not state:abort(404)
+        with transaction(api) as (con,uid):
+            con.execute("update ppmp_ocr_drafts set status='CANCELLED',revision=revision+1 where owner_id=? and ppmp_category=? and source_id=? and status not in ('CONVERTED_TO_PPMP','CANCELLED')",(uid,ptype,state['source_id']))
+            audit(api,con,'Cancelled Own OCR Drafts','PPMP',ptype)
+        session.pop('ppmp_ocr_source',None)
+        flash('Unconverted drafts for this source were cancelled. Other uploads and official records were preserved.')
+    elif action=='update_ocr_row':
+        temp_id=request.form.get('ocr_temp_id','')
+        labels=api['ppmp_review_labels']()
+        if any(f'ocr_field_{i}' not in request.form for i in range(len(api['OCR_PPMP_FIELDS']))):abort(400,description='Every official review field must be submitted.')
+        if any(len(request.form.get(f'ocr_field_{i}',''))>5000 for i in range(len(labels))):abort(400,description='Each reviewed field is limited to 5000 characters; no value was truncated or saved.')
+        fields=api['normalize_reviewed_ocr_fields']({label:api['_text_value'](request.form[f'ocr_field_{i}']) for i,label in enumerate(labels) if f'ocr_field_{i}' in request.form})
+        errors=api['validate_ocr_ppmp_record'](fields)
+        if api['parse_currency_decimal'](fields.get(api['OCR_PPMP_FIELDS']['budget']['label'])) is None:errors.append('Estimated Budget must be a valid monetary value.')
+        try:api['validated_ppmp_item_from_review'](fields,ptype)
+        except ValueError as error:errors.append(str(error))
+        with transaction(api) as (con,uid):
+            row=_ppmp_locked(con,uid,ptype,temp_id)
+            if row['converted'] or row['status']=='CANCELLED' or row['revision']!=revision(request.form.get('ocr_revision')):abort(409,description='Draft changed; reopen Review.')
+            confidence=api['_json_dict'](row['confidence_json']);before=api['_json_dict'](row['fields_json'])
+            confidence.setdefault('_original_fields',dict(before))
+            for label in labels:
+                if fields.get(label)!=before.get(label):
+                    previous=dict(confidence.get(label) or {})
+                    previous.update(human_corrected=True,human_confirmed=True,level='Human corrected',source_match=False)
+                    confidence[label]=previous
+            con.execute('''update ppmp_ocr_drafts set fields_json=?,confidence_json=?,status=?,reviewed=?,reviewed_by=?,reviewed_at=?,updated_at=?,revision=revision+1 where id=?''',
+                (payload(fields),payload(confidence),'NEEDS_REVIEW' if errors else 'REVIEWED',not errors,session['username'],api['now'](),api['now'](),row['id']))
+            audit(api,con,'Reviewed Private OCR Draft','PPMP',temp_id)
+        flash('Review saved. '+(' '.join(dict.fromkeys(errors)) if errors else 'Explicit confirmation is still required to create an official PPMP.'), 'warning' if errors else 'success')
+    elif action=='save_ocr_rows':
+        if request.form.get('confirm_reviewed')!='yes':abort(400,description='Explicitly confirm the reviewed fields before official saving.')
+        ids=request.form.getlist('ocr_rows')
+        if not ids or len(ids)>200 or len(ids)!=len(set(ids)):abort(400,description='Select unique reviewed rows.')
+        created=[]
+        with transaction(api) as (con,uid):
+            created = create_reviewed_ocr(api,ptype,con,uid,ids)
+        flash('Confirmed PPMP records are saved in PostgreSQL: '+', '.join(created))
+        return redirect(url_for('ppmp_home'))
+    else:abort(400)
+    return redirect(url_for('ppmp_type',ptype=ptype))
+
+def create_reviewed_ocr(api,ptype,con,uid,ids,creation=None):
+    created=[]
+    for temp_id in sorted(ids):
+        g.document_stage='creation_draft_lock'
+        row=_ppmp_locked(con,uid,ptype,temp_id)
+        if row['converted'] and row['official_ppmp_id']:
+            existing=con.execute('select no from ppmp where id=?',(row['official_ppmp_id'],)).fetchone()
+            created.append(existing['no']);continue
+        if row['revision']!=revision(request.form.get('ocr_revision_'+temp_id)):
+            creation_item_error(temp_id,'Reviewed data changed. Reopen and confirm this item again.',409)
+        if row['status']!='REVIEWED' or not row['reviewed']:
+            creation_item_error(temp_id,'Review and correct this item before creating an official draft.')
+        fields=api['normalize_reviewed_ocr_fields'](api['_json_dict'](row['fields_json']))
+        try:item=api['validated_ppmp_item_from_review'](fields,ptype)
+        except ValueError:creation_item_error(temp_id,'Stored review fields are invalid. Reopen this item review.')
+        budget=api['parse_currency_decimal'](item.get(api['OCR_PPMP_FIELDS']['budget']['label']))
+        if budget is None:creation_item_error(temp_id,'Estimated Budget is invalid. Correct this item before continuing.')
+        document_metadata=api['_json_dict'](row['confidence_json']).get('_document_metadata') or {}
+        source_year=str(document_metadata.get('fiscal_year') or '')
+        year=int(source_year) if re.fullmatch(r'20\d{2}',source_year) else api['current_year']()
+        office=str(document_metadata.get('office') or '').strip() or 'General Services Office'
+        g.document_stage='creation_number'
+        no=api['next_document_no'](f'PPMP-{ptype}',f'PPMP-{ptype.replace("-", "")}', 'ppmp',year=year,connection=con)
+        if creation is not None:item['_PPMP Creation']=dict(creation)
+        item.update({'_OCR Source':row['extraction_method'],'_OCR Filename':row['source_filename'],'_OCR Temp ID':temp_id,'_OCR Confidence':row['average_confidence']})
+        item['_OCR Field Evidence']=api['_json_dict'](row['confidence_json'])
+        item['_OCR Source ID']=str(row.get('source_id') or '')
+        items=api['assign_item_identifiers']([item],'_PPMP Item ID',no)
+        g.document_stage='creation_insert'
+        did=con.execute('''insert into ppmp(no,type,office,year,status,created_at,items,total,source_type,ocr_source_filename,ocr_raw_text,
+            ocr_average_confidence,ocr_verified,ocr_verified_by,ocr_verified_at,ocr_extraction_timestamp)
+            values(?,?,?,?,'Draft',?,?,?,?,?,?,?,?,?,?,?) returning id''',
+            (no,ptype,office,year,api['now'](),payload(items),float(budget),'OCR',row['source_filename'],row['raw_ocr_text'],
+             row['average_confidence'],True,row['reviewed_by'],row['reviewed_at'],row['created_at'])).fetchone()['id']
+        g.document_stage='creation_draft_update'
+        con.execute("update ppmp_ocr_drafts set status='CONVERTED_TO_PPMP',converted=true,official_ppmp_id=?,converted_at=?,updated_at=?,revision=revision+1 where id=?",(did,api['now'](),api['now'](),row['id']))
+        g.document_stage='creation_audit'
+        audit(api,con,'Created PPMP from Confirmed OCR','PPMP',no);created.append(no)
+    return created
+
+
+def creation_item_error(temp_id,message,status=422):
+    from werkzeug.exceptions import UnprocessableEntity,Conflict,NotFound
+    error=({404:NotFound,409:Conflict}.get(status,UnprocessableEntity))(description=message)
+    error.creation_item=temp_id if re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id) else ''
+    raise error
+
+
+def aoq_load(api):
+    did=request.form.get('draft_id') or request.args.get('draft_id') or session.get('aoq_draft_id')
+    if did:
+        try:did=str(uuid.UUID(str(did)))
+        except ValueError:abort(400)
+        row=api['q']('select * from psms_documents.aoq_drafts where id=? and owner_id=?',(did,_uid()),one=True)
+        if not row:abort(404)
+        if row['status']!='REVIEW' and request.method=='GET':row=None
+    else:
+        row=api['q']("select * from psms_documents.aoq_drafts where owner_id=? and status='REVIEW' order by updated_at desc limit 1",(_uid(),),one=True)
+    if not row:return {}
+    result=dict(row['payload'],draft_id=str(row['id']),draft_revision=row['revision'],source_id=str(row['source_id']),_status=row['status'],_official_id=row['official_aoq_id'])
+    return result
+
+def aoq_upload(api):
+    if not revised_procurement.enabled(api):
+        abort(409, description='Independent AOQ upload requires the authorized revised workflow. PR-linked upload is retired.')
+    return revised_procurement.upload_aoq(api)
+
+def aoq_save_function(api,preview,suppliers,items,index,custom,remarks):
+    """Proposed save adapter. Current authentication/CSRF/navigation remain outside this helper."""
+    corrections=[{key:supplier[key] for key in ('supplier','amount','remarks')} for supplier in suppliers]
+    # Numeric strings preserve Python's shortest binary64 representation, including
+    # signed zero, across PostgreSQL JSONB's numeric normalization.
+    wire_items=[dict(item,**{key:str(item[key]) for key in ('qty','unit_cost','amount')}) for item in items]
+    expected_revision=None if preview.get('_status')=='CONFIRMED' else revision(request.form.get('draft_revision'))
+    if request.form.get('approve_after_review')=='yes':
+        abort(400,description='Save Selection and Approve AOQ are separate actions. Reopen the current form.')
+    selected=request.form.getlist('selected_offer_index') if request.form.get('action')=='save_selection' and preview.get('_status')!='CONFIRMED' else None
+    if selected is not None and (not selected or len(selected)!=len(set(selected)) or any(not value.isdigit() or int(value)>=len(items) for value in selected)):
+        abort(400,description='Select actual quoted item rows before saving.')
+    subset=selected is not None and sorted(map(int,selected))!=list(range(len(items)))
+    try:
+        with transaction(api,read_committed=True) as (con,uid):
+            con.execute("SET LOCAL lock_timeout = '5s'")
+            con.execute("SET LOCAL statement_timeout = '10s'")
+            if preview.get('pr_id') is None and not revised_procurement.enabled(api):
+                abort(409,description='Independent AOQ saving is disabled until its database contract is authorized.')
+            saver='save_reviewed_aoq_independent_v1' if preview.get('pr_id') is None else 'save_reviewed_aoq_v1'
+            if subset:
+                if preview.get('pr_id') is not None:abort(409,description='Partial selection for historical PR-linked AOQs requires a separately reviewed contract.')
+                saver='save_selected_aoq_independent_v2'
+                digest=revised_procurement.FINAL_ROUTINE_MD5.get(saver,'')
+                if not re.fullmatch('[0-9a-f]{32}',digest):abort(409,description='The source-item selection SQL fingerprint has not been reviewed. No rows were removed or saved.')
+                signature=revised_procurement.api_schema()+'.'+saver+'(uuid,bigint,text,integer,jsonb,jsonb,text,text,boolean,jsonb)'
+                ready=con.execute("""select coalesce(has_function_privilege(to_regprocedure(?),'EXECUTE'),false)
+                    and exists(select 1 from pg_catalog.pg_proc p join pg_catalog.pg_roles r on r.oid=p.proowner
+                      where p.oid=to_regprocedure(?) and p.prosecdef and r.rolname='psms_aoq_function_owner'
+                      and not r.rolsuper and not r.rolbypassrls and not r.rolcanlogin
+                      and 'row_security=on'=any(p.proconfig)
+                      and exists(select 1 from unnest(p.proconfig) s where replace(s,' ','')='search_path=pg_catalog,pg_temp')
+                      and md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))=?
+                      and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+                        where a.privilege_type='EXECUTE' and a.grantee not in
+                          (p.proowner,coalesce((select oid from pg_catalog.pg_roles where rolname='psms_vercel_backend'),0)))) ready""",
+                    (signature,signature,digest)).fetchone()
+                if not ready or ready.get('ready') is not True:abort(409,description='Saving a subset of source items requires the reviewed selection SQL contract. No other items were silently removed.')
+            result=con.execute(f'''select aoq_id,aoq_no,created,draft_revision
+                from {revised_procurement.api_schema()}.{saver}(
+                    ?::uuid,?::bigint,?::text,?::integer,?::jsonb,?::jsonb,?::text,?::text,?::boolean{',?::jsonb' if subset else ''})''',
+                (preview['draft_id'],expected_revision,
+                 request.form.get('offer_review_token'),index,payload(corrections),payload(wire_items),custom,remarks,
+                 request.form.get('confirm_reviewed')=='yes')+((payload(sorted(map(int,selected))),) if subset else ())).fetchone()
+            if (not result or type(result['aoq_id']) is not int or result['aoq_id']<=0
+                    or not isinstance(result['aoq_no'],str) or type(result['created']) is not bool
+                    or type(result['draft_revision']) is not int or result['draft_revision']<=0):
+                raise RuntimeError('AOQ receipt unavailable')
+    except HTTPException:
+        raise
+    except Exception as error:
+        code=getattr(error,'sqlstate',None)
+        known={
+            'PA001':(400,'Correct the reviewed quotation and explicitly confirm it before saving.'),
+            'PA002':(409,'This draft or its PR changed. Reopen the saved review before continuing.'),
+            'PA003':(403,'Your active account session is required.'),
+            'PA004':(404,'The requested record is unavailable.'),
+        }
+        if code in known:
+            status,message=known[code];abort(status,description=message)
+        # Commit/cleanup failures can have unknown outcomes. Never say saved=False,
+        # retry automatically, expose driver text, or clear the private receipt pointer.
+        reference=uuid.uuid4().hex[:16]
+        safe_code=code if isinstance(code,str) and re.fullmatch(r'[0-9A-Z]{5}',code) else 'UNKNOWN'
+        current_app.logger.warning('AOQ save outcome unconfirmed sqlstate=%s reference=%s',safe_code,reference)
+        message='AOQ saving could not be confirmed. Reopen the existing saved draft before retrying. Reference: '+reference
+        if request.accept_mimetypes.best=='application/json':
+            response=jsonify(saved=None,message=message,reference=reference);response.status_code=503
+        else:
+            from flask import render_template,make_response
+            response=make_response(render_template('operation_error.html',active='',title='Operation needs attention',message=message,status=503),503)
+        response.headers['Cache-Control']='private, no-store'
+        return response
+    session.pop('aoq_draft_id',None)
+    flash('Selection saved for review; AOQ approval remains separate.' if result['created'] else
+          'This confirmed AOQ is already saved. No duplicate was created.')
+    return redirect(url_for('aoq',view='records'))
+
+
+def aoq_post(api):
+    action=request.form.get('action') or 'extract_ocr'
+    if action=='save_selection':action='save_ocr'
+    if action=='save_ocr' and not revised_procurement.enabled(api):
+        abort(409, description='Official AOQ saving requires the authorized revised workflow.')
+    if action=='extract_ocr':return aoq_upload(api)
+    if not request.form.get('draft_id'):abort(400,description='Reopen the saved review form.')
+    preview=aoq_load(api)
+    if not preview:abort(404)
+    did=preview['draft_id']
+    if action=='save_ocr' and preview['_status']=='CONFIRMED':
+        return aoq_save_function(api,preview,[],[],-1,'','')
+    if preview['_status']!='REVIEW':abort(409)
+    if preview['draft_revision']!=revision(request.form.get('draft_revision')):
+        abort(409,description='Draft changed. Reopen Review before saving.')
+    if action=='save_ocr' and request.form.get('confirm_reviewed')!='yes':abort(400,description='Explicitly confirm the reviewed quotation before official saving.')
+    from aoq_flexible import winning_offer_error,offer_supplier_error,reviewed_total
+    suppliers=api['posted_aoq_suppliers'](preview);items=api['posted_aoq_items']()
+    if len(items)>200 or len(suppliers)>100:abort(400)
+    try:index=int(request.form.get('winner_index') or -1)
+    except ValueError:index=-1
+    custom=(request.form.get('winner_custom') or '').strip()[:500]
+    remarks=(request.form.get('remarks') or '').strip()[:5000]
+    if action=='review_supplier':
+        original=preview.get('suppliers') or []
+        if 0<=index<len(original) and len(suppliers)==len(original):
+            preview.update(offer_items=[dict(i) for i in original[index].get('items') or []],offer_supplier_index=str(index),offer_custom_winner='')
+        elif custom and index==-1:preview.update(offer_items=[],offer_supplier_index='custom',offer_custom_winner=custom)
+        else:abort(400,description='Select a quotation supplier first.')
+        preview.update(offer_review_token=secrets.token_urlsafe(24),supplier_form=suppliers,remarks=remarks,selected_winner_index=index)
+    elif action=='save_ocr':
+        if 0<=index<len(suppliers):winner=suppliers[index]['supplier']
+        elif custom:winner=custom
+        else:winner=''
+        if not winner or sum(api['_norm_text'](s.get('supplier'))==api['_norm_text'](winner) for s in suppliers)>1:abort(400,description='Choose one unambiguous winning supplier.')
+        selected_items=items
+        if request.form.get('action')=='save_selection':
+            selected=request.form.getlist('selected_offer_index')
+            if not selected or len(selected)!=len(set(selected)) or any(not value.isdigit() or int(value)>=len(items) for value in selected):
+                abort(400,description='Select actual quoted item rows before saving.')
+            selected_items=[items[position] for position in sorted(map(int,selected))]
+        error=winning_offer_error(selected_items) or offer_supplier_error(preview,index,items,request.form)
+        if any(s.get('items') for s in preview.get('suppliers') or []) and len(suppliers)!=len(preview['suppliers']):error='Supplier rows changed; reopen Review.'
+        if error:abort(400,description=error)
+        amount=round(reviewed_total(selected_items),2)
+        if amount<=0:abort(400,description='Reviewed total must be positive.')
+        return aoq_save_function(api,preview,suppliers,items,index,custom,remarks)
+    elif action not in ('clear_ocr','prepare_preview'):abort(400)
+    with transaction(api) as (con,uid):
+        # Parent lock before draft lock: independent drafts for one PR cannot
+        # race the one-official-AOQ check. No OCR/file processing occurs here.
+        if preview.get('pr_id') is not None:
+            if revised_procurement.enabled(api):
+                pr=con.execute("select id from pr where id=? and status='Approved'",(preview['pr_id'],)).fetchone()
+            else:
+                pr=con.execute('select * from pr where id=? for update',(preview['pr_id'],)).fetchone()
+            if not pr:abort(409,description='The linked approved PR changed.')
+        row=con.execute('select * from psms_documents.aoq_drafts where id=? and owner_id=? for update',(did,uid)).fetchone()
+        if row['status']!='REVIEW' or row['revision']!=revision(request.form.get('draft_revision')):abort(409,description='Draft changed. Reopen Review before saving.')
+        if action=='clear_ocr':
+            con.execute("update psms_documents.aoq_drafts set status='CANCELLED',revision=revision+1,updated_at=clock_timestamp() where id=?",(did,))
+            audit(api,con,'Cancelled Own OCR Draft','AOQ',did)
+        else:
+            con.execute('update psms_documents.aoq_drafts set payload=?::jsonb,revision=revision+1,updated_at=clock_timestamp() where id=?',(payload(preview),did))
+            audit(api,con,'Reviewed Private OCR Draft','AOQ',did)
+    if action=='clear_ocr':session.pop('aoq_draft_id',None)
+    flash('Private review updated. No inventory quantity was changed.')
+    return redirect(url_for('aoq',**({} if action=='clear_ocr' else dict(draft_id=did))))
+
+def aoq_source(api,did):
+    row=api['q']("select s.filename,s.extension,s.content from psms_documents.sources s join psms_documents.aoq_drafts d on d.source_id=s.id where d.official_aoq_id=? and d.status='CONFIRMED'",(did,),one=True)
+    if not row:return None
+    response=Response(bytes(row['content']),mimetype='application/octet-stream')
+    response.headers['Content-Disposition']="attachment; filename=\"source-document"+row['extension']+'"'
+    response.headers['X-Content-Type-Options']='nosniff';response.headers['Cache-Control']='private, no-store'
+    return response
+
+def protected(operation,*args):
+    try:return operation(*args)
+    except HTTPException as error:
+        reference=None
+        if hasattr(error,'creation_item') and error.code==404:
+            # A missing/hidden draft is an HTTP failure, not a driver exception.
+            # Keep this branch distinguishable in runtime logs without logging
+            # account IDs, item IDs, SQL, tokens or source contents.
+            reference=uuid.uuid4().hex[:16]
+            current_app.logger.warning('Private document failed [DOCUMENT_ITEM_UNAVAILABLE] operation=create stage=creation_draft_lock reference=%s',reference)
+        if hasattr(error,'creation_item') and request.accept_mimetypes.best=='application/json':
+            body=dict(saved=False,field='item',item=error.creation_item,message=error.description)
+            if reference:body['reference']=reference
+            response=jsonify(body);response.status_code=error.code
+            if reference:
+                response.headers['X-PSMS-Diagnostic']='DOCUMENT_ITEM_UNAVAILABLE'
+                response.headers['X-PSMS-Reference']=reference
+            response.headers['Cache-Control']='private, no-store'
+            return response
+        raise
+    except Exception as error:
+        # Never log exception text/tracebacks, SQL, filenames, tokens or document
+        # contents. SQLSTATE and fixed stages are sufficient to distinguish a
+        # missing migration/permission from extraction and resource failures.
+        code={
+            '42P01':'DOCUMENT_SCHEMA_MISSING','3F000':'DOCUMENT_SCHEMA_MISSING',
+            '42703':'DOCUMENT_SCHEMA_INCOMPATIBLE','42501':'DOCUMENT_PERMISSION_DENIED',
+            '57014':'DOCUMENT_PROCESSING_TIMEOUT','55P03':'DOCUMENT_BUSY',
+            '23505':'DOCUMENT_CONFLICT','23503':'DOCUMENT_SOURCE_CHANGED',
+            '22P05':'DOCUMENT_TEXT_ENCODING_INVALID','22021':'DOCUMENT_TEXT_ENCODING_INVALID',
+        }.get(getattr(error,'sqlstate',None),'DOCUMENT_PROCESSING_FAILED')
+        if isinstance(error,TimeoutError):code='DOCUMENT_PROCESSING_TIMEOUT'
+        if isinstance(error,MemoryError):code='DOCUMENT_RESOURCE_LIMIT'
+        stage=getattr(g,'document_stage','review')
+        if stage not in {'validation','source_lookup','extraction','mapping','draft_persistence','review',
+                         'creation_session','creation_receipt','creation_draft_lock','creation_number',
+                         'creation_insert','creation_draft_update','creation_audit','creation_commit'}:
+            stage='review'
+        if stage=='extraction' and type(error) is RuntimeError:
+            code={
+                'Document processing is busy; retry shortly.':'DOCUMENT_BUSY',
+                'Document processing time limit exceeded; review a smaller document.':'DOCUMENT_PROCESSING_TIMEOUT',
+                'No readable text or table was detected in the uploaded document.':'DOCUMENT_UNREADABLE',
+            }.get(str(error),code)
+        location='unavailable'
+        trace=error.__traceback__
+        while trace is not None:
+            name=trace.tb_frame.f_code.co_filename.replace('\\','/').rsplit('/',1)[-1]
+            if name in {'app.py','db.py','durable_ocr_v0_1_0.py','aoq_flexible.py',
+                         'offline_ocr_mapper.py','private_document_uploads.py'}:
+                location=name+':'+str(trace.tb_lineno)
+            trace=trace.tb_next
+        reference=uuid.uuid4().hex[:16]
+        current_app.logger.warning('Private document failed [%s] operation=%s stage=%s location=%s reference=%s',
+            code,getattr(operation,'__name__','document'),stage,location,reference)
+        messages={
+            'DOCUMENT_SCHEMA_MISSING':'Private document storage is not installed. Ask the administrator to check the document schema; repeated uploads will not fix it.',
+            'DOCUMENT_SCHEMA_INCOMPATIBLE':'Private document storage needs its reviewed schema update. Ask the administrator to check the document columns.',
+            'DOCUMENT_PERMISSION_DENIED':'The backend cannot access private document storage. Ask the administrator to check the restricted document grants and policies.',
+            'DOCUMENT_PROCESSING_TIMEOUT':'Document processing timed out. Use fewer pages or a smaller supported document, then reopen the review before retrying.',
+            'DOCUMENT_RESOURCE_LIMIT':'Document processing exceeded available resources. Split the document into smaller supported files.',
+            'DOCUMENT_BUSY':'Document processing is busy. Reopen the saved review and retry shortly.',
+            'DOCUMENT_UNREADABLE':'No readable item text or table was found. Use a clear scan, a searchable PDF, or a supported native workbook.',
+        }
+        message=messages.get(code,'Document processing could not be confirmed. Reopen the saved review before retrying; no success is assumed.')
+        status=422 if code=='DOCUMENT_UNREADABLE' else 503
+        if request.accept_mimetypes.best=='application/json':
+            response=jsonify(saved=False,message=message,reference=reference)
+            response.status_code=status
+        else:
+            from flask import render_template,make_response
+            response=make_response(render_template('operation_error.html',active='',title='Operation needs attention',
+                message=message+' Reference: '+reference,status=status),status)
+        response.headers['Cache-Control']='private, no-store'
+        response.headers['X-PSMS-Diagnostic']=code
+        response.headers['X-PSMS-Reference']=reference
+        return response

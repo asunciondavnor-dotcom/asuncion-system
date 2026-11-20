@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% from 'pr_po_verification_ui.html' import result_badge,document_panel,findings_table with context %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
+{% block content %}{% if display is not defined %}{% set display={'status':'Needs Review','percentage':'Not calculated','explanation':'Saved result details are unavailable in this read-only preview.','findings':[]} %}{% endif %}<div class="pr-po-simple"><section class="card"><h2>PR–PO Verification Result</h2>
+<div class="pr-po-metadata"><div>NLP Record No.<strong>{{row.no}}</strong></div><div>PR No.<strong>{{pr.no}}</strong></div><div>PO No.<strong>{{po.no}}</strong></div><div>Reviewed By<strong>{{row.reviewed_by or 'Not reviewed'}}</strong></div><div>Review Date<strong>{{row.reviewed_at|philippine_time if row.reviewed_at else 'Not reviewed'}}</strong></div></div>
+<div class="pr-po-result {{'pr-po-match' if display.status=='Match' else 'pr-po-attention'}}"><h3>Verification Result: {{result_badge(display)}}</h3><p>{{display.explanation}}</p></div>
+<div class="pr-po-documents">{{document_panel('Purchase Request (PR)',pr_items)}}{{document_panel('Purchase Order (PO)',po_items)}}</div>
+<h3>Discrepancy Details</h3>{{findings_table(display)}}
+<div class="actions"><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
+</section></div>{% endblock %}

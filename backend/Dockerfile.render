@@ -1,0 +1,45 @@
+# Separate Render preparation. Does not alter the Vercel build or live service.
+# Render must use an approved PRIVATE mirror in a supported registry (e.g. GHCR).
+# The existing VCR digest is a local compatibility default, not a verified Render
+# registry integration. Override APPROVED_MODEL_IMAGE with the reviewed mirror.
+ARG APPROVED_MODEL_IMAGE=vcr.vercel.com/arman-a87f/asuncion/approved-models@sha256:ab17ebc3a697568a4a3fcafd7af686d7e7e258bda36c7b7e33817da9007356ee
+FROM ${APPROVED_MODEL_IMAGE} AS approved_models
+
+FROM python:3.13.16-slim-bookworm AS source
+WORKDIR /source
+# Dockerfile.render.dockerignore permits only the exact reviewed source inputs.
+COPY . /source/
+RUN python -B deploy/render_delivery.py /runtime
+
+FROM python:3.13.16-slim-bookworm AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PSMS_ENV=production PORT=10000 PSMS_BIND_HOST=0.0.0.0 PSMS_THREADS=2 \
+    PSMS_DATA_DIR=/tmp/psms HOME=/tmp \
+    PSMS_NLP_RUNTIME=retrained_rf PSMS_INFERENCE_ENABLED=1 \
+    PSMS_INFERENCE_RELEASE_ID=nlp-online-original-v2 PSMS_INFERENCE_CACHE_ENABLED=0 \
+    PSMS_PRODUCTION_DB_ENABLED=0 PSMS_DURABLE_WORKBOOKS_ENABLED=1 \
+    PSMS_DB_SSLROOTCERT=/app/certs/supabase-ca.crt \
+    TESSERACT_CMD=/usr/bin/tesseract \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 TOKENIZERS_PARALLELISM=false \
+    OMP_THREAD_LIMIT=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates libgomp1 tesseract-ocr tesseract-ocr-eng fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system psms \
+    && useradd --system --gid psms --home-dir /app psms \
+    && mkdir -p /tmp/psms && chown psms:psms /tmp/psms
+WORKDIR /app
+COPY --from=source /runtime/deploy/requirements-staging-linux-amd64.lock.txt /app/deploy/
+RUN pip install --no-cache-dir --only-binary=:all: --no-deps \
+       -r /app/deploy/requirements-staging-linux-amd64.lock.txt && pip check
+COPY --from=source /runtime/ /app/
+COPY --from=approved_models --chmod=0555 /inference_releases/nlp-online-original-v2/ /app/inference_releases/nlp-online-original-v2/
+RUN chmod 0444 /app/certs/supabase-ca.crt
+USER psms
+RUN python -B deploy/render_image_check.py
+EXPOSE 10000
+# Render health check: /health/live. No migrations, bootstraps or downloads.
+# Existing launcher uses Waitress, one process, and the Render-supplied $PORT.
+CMD ["python", "deploy/render_start.py"]

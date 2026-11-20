@@ -1,0 +1,42 @@
+{% macro source_fields(source) %}
+<div class="stored-field-grid">
+  {% for key, value in source.items() %}
+  <div class="stored-field"><span>{{ key }}</span><b>{{ value if value is not none and value != '' else 'Not provided' }}</b></div>
+  {% endfor %}
+</div>
+{% endmacro %}
+{% macro evidence(values) %}
+  {% for value in values %}
+  <div>{% if session.get('role')=='Admin' %}<span class="muted">{{value.ref}}</span><br>{% endif %}<q>{{ value.quote }}</q>{% if value.unit %} ({{ value.unit }}){% endif %}</div>
+  {% else %}<span class="muted">No explicit evidence available.</span>{% endfor %}
+{% endmacro %}
+{% macro finding_table(findings) %}
+<div class="review-table-wrap"><table class="table review-items-table">
+  <thead><tr><th>Source check</th><th>Requested evidence</th><th>Offered evidence</th><th>Technical finding</th></tr></thead>
+  <tbody>{% for check in findings %}
+    <tr><td><b>{{ check.attribute }}</b><br><span class="badge {{ 'info' if check.state == 'PASS' else 'warn' }}">{{ {'PASS': 'Source check satisfied', 'VIOLATED': 'Technical difference', 'WORDING_DIFFERENCE': 'Wording difference', 'UNKNOWN': 'Unsupported or uncertain'}.get(check.state, 'Unsupported or uncertain') }}</span></td>
+      <td>{{ evidence(check.requested_evidence) }}</td><td>{{ evidence(check.offered_evidence) }}</td>
+      <td>{{ check.explanation }}{% if check.question %}<p><b>Human review:</b> {{ check.question }}</p>{% endif %}
+      {% for value in check.unresolved_evidence or [] %}<p><q>{{ value.quote }}</q></p>{% endfor %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endmacro %}
+<section class="card review-card" id="historicalDiscrepancyFindings">
+<h3>Automated Discrepancy Findings   -  Historical Sources</h3>
+<p class="notice">These read-only advisory checks use the linked source items. They do not replace the saved model result above, establish an authorized relationship, or reopen the retired approval process.</p>
+<p class="muted">Missing specifications, unsupported wording, and uncertain item relationships remain unresolved. Review the recorded source requirements above.</p>
+{% if item_comparison.error %}<p class="warning-box">{{item_comparison.error}}</p>{% endif %}
+{% if item_comparison.result %}
+{% if item_comparison.price_summary and item_comparison.price_summary.difference is not none %}<p><b>Document totals:</b> PR {{item_comparison.price_summary.requested|money}} / PO {{item_comparison.price_summary.offered|money}}. <b>PR minus PO:</b> {{item_comparison.price_summary.difference|money}}. This order-wide difference does not establish item correspondence.</p>{% endif %}
+{% for row in item_comparison.result.rows %}
+<article class="procurement-source-item"><h4>PR item {{row.requested_position}}: {{row.requested.item or row.requested.description or 'Identity not established'}}</h4>
+{% if row.matching_state=='BOUND' %}<p>Recorded source correspondence: PO item {{row.offered_position}}.</p>
+{% elif row.matching_state=='CANDIDATE' %}<p class="warning-box">A possible corresponding item remains unconfirmed. Conditional arithmetic does not prove equivalence or compliance.</p>
+{% else %}<p class="warning-box">{% if row.matching_state=='AMBIGUOUS' %}Ambiguous item relationship. {% endif %}Requested item has no established offered match.{% if 'Missing item' in row.issue_candidates %} Potential missing requested item. Confirm omission against the complete source documents.{% endif %}</p>{% endif %}
+{% if row.matching_state!='BOUND' and row.candidates %}<p>Candidate descriptions: {% for candidate in row.candidates %}PO item {{candidate.offered_position}}: {{candidate.offered_name}}. {{'Exact name with unresolved allocation.' if candidate.evidence=='EXACT_NAME_WITH_UNRESOLVED_ALLOCATION' else 'Shared words only.'}} {% endfor %}</p>{% endif %}
+{% if row.checks %}{{finding_table(row.checks)}}{% endif %}
+</article>{% endfor %}
+{% if item_comparison.result.unallocated_offers %}<h4>Unmatched offered items</h4>{% for offer in item_comparison.result.unallocated_offers %}<p class="warning-box">PO item {{offer.position}}: {{offer.source.item or offer.source.description or 'Identity not established'}}. {{offer.explanation}} No correspondence has been authorized.</p>{% endfor %}{% endif %}
+{% if item_comparison.result.document_checks %}<h4>Unsupported or uncertain document comparisons</h4>{{finding_table(item_comparison.result.document_checks)}}{% endif %}
+{% else %}<p class="warning-box">Source checks could not be established. Original results and source fields remain unchanged.</p>{% endif %}
+</section>

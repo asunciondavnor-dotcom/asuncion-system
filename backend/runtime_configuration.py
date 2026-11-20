@@ -1,0 +1,218 @@
+"""Explicit runtime configuration; no proxy, credential or database initialization."""
+import os
+from pathlib import Path
+import re
+
+
+CLOUD_MODES = ('staging', 'production')
+LOCAL_DATABASE_HOSTS = frozenset(('localhost', '127.0.0.1', '::1'))
+_LOCAL_LIBPQ_OVERRIDES = frozenset((
+    'PGHOST', 'PGHOSTADDR', 'PGPORT', 'PGDATABASE', 'PGUSER',
+    'PGSERVICE', 'PGSERVICEFILE', 'PGSYSCONFDIR', 'PGOPTIONS',
+))
+_CLOUD_PARAMETERS = frozenset((
+    'host', 'port', 'dbname', 'user', 'password', 'sslmode', 'sslrootcert',
+))
+_RESERVED_DATABASE_ROLES = frozenset((
+    'postgres', 'public', 'anon', 'authenticated', 'service_role',
+    'authenticator', 'admin', 'root', 'dashboard_user', 'pgbouncer',
+    'supavisor', 'realtime_admin',
+))
+PACKAGED_DATABASE_CA = 'certs/supabase-ca.crt'
+# DER fingerprint of the owner's locally tested public Supabase Root 2021 CA.
+# DER remains stable across Git LF/CRLF conversion; never pin a private key.
+PACKAGED_DATABASE_CA_SHA256 = '807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa'
+
+
+def validate_packaged_database_ca(base):
+    """Build/delivery check only. No database connection or local-profile change."""
+    import hashlib
+    import ssl
+    root = Path(base).resolve()
+    certificate = root / PACKAGED_DATABASE_CA
+    try:
+        if (certificate.is_symlink() or not certificate.resolve().is_relative_to(root)
+                or not certificate.is_file() or certificate.stat().st_size > 16384):
+            raise ValueError()
+        text = certificate.read_bytes().decode('ascii').strip()
+        if not re.fullmatch(r'-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----', text):
+            raise ValueError()
+        der = ssl.PEM_cert_to_DER_cert(text)
+        if hashlib.sha256(der).hexdigest() != PACKAGED_DATABASE_CA_SHA256:
+            raise ValueError()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=text)
+        if context.cert_store_stats()['x509_ca'] != 1:
+            raise ValueError()
+    except Exception:
+        raise RuntimeError('PACKAGED_DATABASE_CA_INVALID') from None
+    return certificate
+
+
+def validate_database_configuration(dsn, *, environ=None):
+    """Return validated conninfo offline; callers must never log the result.
+
+    Cloud preparation requires PSMS_ENV=staging/production and explicit
+    PSMS_DB_EXPECTED_HOST, PSMS_DB_EXPECTED_DATABASE, PSMS_DB_BACKEND_ROLE,
+    PSMS_SUPABASE_PROJECT_REF and PSMS_DB_CONNECTION_MODE expectations.
+    A URI may omit TLS parameters: use verify-full and the operator-configured
+    PSMS_DB_SSLROOTCERT file. Explicit URI TLS settings are never overwritten.
+    These string checks do not authenticate a server or establish SQL privileges.
+    db.Connection requires cloud activation independently of this validator.
+    """
+    environment = os.environ if environ is None else environ
+    mode = environment_mode(environment)
+    cloud = mode in CLOUD_MODES
+    # Do not resolve services, read credential files, clear overrides, or echo values.
+    if any(value and (key.upper().startswith('PG') if cloud else
+                      key.upper() in _LOCAL_LIBPQ_OVERRIDES)
+           for key, value in environment.items()):
+        raise RuntimeError('Inherited libpq overrides are not allowed for this database profile.')
+    if not isinstance(dsn, str) or not dsn.strip():
+        raise RuntimeError('Explicit staging/production database configuration is required.' if cloud else
+                           'An explicit local database target is required.')
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    try:
+        parameters = conninfo_to_dict(dsn)
+    except Exception:
+        raise RuntimeError('Database connection configuration is invalid.') from None
+    if any(key in parameters for key in ('hostaddr', 'service', 'options')):
+        raise RuntimeError('Database address, service and startup-option overrides are not allowed.')
+    host = parameters.get('host', '')
+    port = parameters.get('port', '5432')
+    if not re.fullmatch(r'[0-9]{1,5}', port) or not 1 <= int(port) <= 65535:
+        raise RuntimeError('One explicit database port is required; port lists are not allowed.')
+    if any(part in parameters.get('dbname', '') for part in ('=', '://')):
+        raise RuntimeError('Nested database connection parameters are not allowed.')
+    pooler_flag = environment.get('PSMS_DB_TRANSACTION_POOLER', '0')
+    if not cloud:
+        if host.lower() not in LOCAL_DATABASE_HOSTS:
+            raise RuntimeError('Local/test database profiles require an approved loopback host.')
+        return dsn
+    if pooler_flag not in ('0', '1'):
+        raise RuntimeError('PSMS_DB_TRANSACTION_POOLER must explicitly select a supported setting.')
+
+    required = ('PSMS_DB_EXPECTED_HOST', 'PSMS_DB_EXPECTED_DATABASE',
+                'PSMS_DB_BACKEND_ROLE', 'PSMS_SUPABASE_PROJECT_REF', 'PSMS_DB_CONNECTION_MODE')
+    if not all(environment.get(key, '').strip() for key in required):
+        raise RuntimeError('Complete cloud database identity expectations are required.')
+    tls_defaults = {}
+    if 'sslmode' not in parameters:
+        tls_defaults['sslmode'] = 'verify-full'
+    if 'sslrootcert' not in parameters:
+        certificate = environment.get('PSMS_DB_SSLROOTCERT', '').strip()
+        if not certificate:
+            raise RuntimeError('Cloud requires sslrootcert in the URI or PSMS_DB_SSLROOTCERT pointing to a trusted local CA file.')
+        tls_defaults['sslrootcert'] = certificate
+    parameters.update(tls_defaults)
+    if set(parameters) != _CLOUD_PARAMETERS or not all(parameters.values()):
+        raise RuntimeError('Cloud requires only explicit host, port, database, login and verified TLS parameters.')
+    role = environment['PSMS_DB_BACKEND_ROLE'].strip()
+    project = environment['PSMS_SUPABASE_PROJECT_REF'].strip()
+    expected_host = environment['PSMS_DB_EXPECTED_HOST'].strip().lower()
+    database = environment['PSMS_DB_EXPECTED_DATABASE'].strip()
+    connection_mode = environment['PSMS_DB_CONNECTION_MODE'].strip()
+    if (not re.fullmatch(r'[a-z_][a-z0-9_]{0,62}', role)
+            or role in _RESERVED_DATABASE_ROLES or role.startswith(('pg_', 'supabase_'))):
+        raise RuntimeError('Cloud requires an explicitly reviewed nonprivileged backend role name.')
+    if (not re.fullmatch(r'[a-z0-9]{20}', project)
+            or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,62}', database)
+            or host.lower() != expected_host or parameters['dbname'] != database):
+        raise RuntimeError('Cloud database target does not match the explicit expectations.')
+    project_host = 'db.' + project + '.supabase.co'
+    shared_pooler = bool(re.fullmatch(r'(?:[a-z0-9]+(?:-[a-z0-9]+)*\.)+pooler\.supabase\.com', expected_host))
+    if expected_host == project_host:
+        allowed_modes = ('direct', 'transaction')
+        expected_login = role
+    elif shared_pooler:
+        allowed_modes = ('session', 'transaction')
+        expected_login = role + '.' + project
+    else:
+        raise RuntimeError('Cloud host does not match the supported Supabase project/pooler forms.')
+    if connection_mode not in allowed_modes or parameters['user'] != expected_login:
+        raise RuntimeError('Cloud connection mode or project-scoped backend login does not match.')
+    transaction_pooler = connection_mode == 'transaction'
+    if (port != ('6543' if transaction_pooler else '5432')
+            or pooler_flag != ('1' if transaction_pooler else '0')):
+        raise RuntimeError('Cloud pooler port and prepared-statement settings are incompatible.')
+    certificate = parameters['sslrootcert']
+    if (parameters['sslmode'] != 'verify-full' or certificate.startswith(('//', '\\\\'))
+            or not Path(certificate).is_absolute() or not Path(certificate).is_file()):
+        raise RuntimeError('Cloud requires verify-full TLS and an explicit existing local root certificate.')
+    return make_conninfo(dsn, **tls_defaults) if tls_defaults else dsn
+
+
+def validate_local_launcher():
+    """Preflight only, before the local launcher touches keys, models or a database."""
+    if environment_mode() not in ('local', 'test'):
+        raise RuntimeError('START_SYSTEM.ps1 accepts only local/test database profiles.')
+    from db import database_url
+    validate_database_configuration(database_url())
+
+
+def environment_mode(environ=None):
+    """Use one fail-closed interpretation in both Flask and database callers."""
+    environment = os.environ if environ is None else environ
+    mode = environment.get('PSMS_ENV', 'local').strip().lower()
+    if mode not in ('local', 'test', *CLOUD_MODES):
+        raise RuntimeError('PSMS_ENV must be local, test, staging or production.')
+    return mode
+
+
+def configure(app):
+    from transfer_limits import document_limit, request_limit, on_vercel
+    mode=environment_mode()
+    if on_vercel() and mode not in CLOUD_MODES:
+        raise RuntimeError('Vercel requires an explicit staging/production configuration.')
+    app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',
+                      MAX_CONTENT_LENGTH=request_limit(),DOCUMENT_UPLOAD_LIMIT=document_limit())
+    app.config['PSMS_ENV'] = mode
+    if mode in CLOUD_MODES:
+        validate_database_configuration(os.environ.get('SUPABASE_DB_URL', ''))
+        hosts=[h.strip() for h in os.environ.get('PSMS_TRUSTED_HOSTS','').split(',') if h.strip()]
+        # Immutable Preview URLs are generated by Vercel, so they cannot be
+        # prefilled before deployment. Reuse Option B's exact project/release/
+        # token/server-host checks; never trust a browser or forwarded header.
+        # This permits routing only. SQL capability and actor checks still gate
+        # every revised operation, and Production's configured hosts are intact.
+        from revised_procurement_v1 import configured_release_context
+        release_context = configured_release_context()
+        if release_context and release_context[1] not in hosts:
+            hosts.append(release_context[1])
+        elif not release_context and on_vercel():
+            # Preserve main's existing exact server-deployment routing for the
+            # current Production/legacy application. This is never a wildcard.
+            deployment_host = os.environ.get('VERCEL_URL', '').strip().lower()
+            if re.fullmatch(r'asuncion-[a-z0-9-]+-arman-a87f\.vercel\.app', deployment_host):
+                if deployment_host not in hosts:
+                    hosts.append(deployment_host)
+        if not hosts:raise RuntimeError('Reviewed staging/production trusted hosts are required.')
+        app.config.update(SESSION_COOKIE_SECURE=True,TRUSTED_HOSTS=hosts,DEBUG=False)
+    # Forwarded headers remain untrusted. ProxyFix requires separately reviewed
+    # proxy counts and infrastructure; configuration never enables it implicitly.
+
+    def liveness():
+        # Deliberately shallow: no accounts, database, models, paths or settings.
+        return {'status': 'alive'}
+
+    app.add_url_rule('/health/live', 'runtime_liveness', liveness, methods=['GET'])
+
+    @app.before_request
+    def reject_untrusted_host():
+        # Flask records routing errors before before_request. Stop a rejected
+        # host before authentication tries url_for() without a URL adapter.
+        from flask import request
+        from werkzeug.exceptions import SecurityError
+        if isinstance(request.routing_exception, SecurityError):
+            raise request.routing_exception
+
+    @app.after_request
+    def safe_response_headers(response):
+        if on_vercel() and response.content_length is not None and response.content_length > request_limit():
+            from flask import Response
+            response = Response('This retained document or export exceeds the hosted transfer limit. '
+                'The stored record was preserved; use an approved private transfer path.',
+                status=413,mimetype='text/plain',headers={'Cache-Control':'private, no-store'})
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('Referrer-Policy', 'same-origin')
+        return response

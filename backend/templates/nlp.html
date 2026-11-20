@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% from 'pr_po_verification_ui.html' import result_badge with context %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
+{% block content %}
+<div class="pr-po-simple"><section class="card"><h2>Verification Records</h2><p class="notice">New verification requires the authorized workflow. Saved records remain available.</p>
+<div class="table-scroll"><table class="table"><thead><tr><th>NLP Record No.</th><th>PR No.</th><th>PO No.</th><th>Result</th><th>Reviewed By</th><th>Date</th><th>Action</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{row.no or row.id}}</td><td>{{row.pr_no or 'Not recorded'}}</td><td>{{row.po_no}}</td><td>{{result_badge(record_displays[row.id])}}</td><td>{{row.reviewed_by or 'Not reviewed'}}</td><td>{{row.reviewed_at|philippine_time if row.reviewed_at else row.created_at|philippine_time if row.created_at else 'Not recorded'}}</td><td><a class="btn small" href="{{url_for('nlp_review',id=row.id)}}">View Results</a></td></tr>{% else %}<tr><td colspan="7">No saved verification records.</td></tr>{% endfor %}
+</tbody></table></div></section></div>
+{% endblock %}
