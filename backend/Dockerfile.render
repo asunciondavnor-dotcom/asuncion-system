@@ -2,7 +2,7 @@
 # Render must use an approved PRIVATE mirror in a supported registry (e.g. GHCR).
 # The existing VCR digest is a local compatibility default, not a verified Render
 # registry integration. Override APPROVED_MODEL_IMAGE with the reviewed mirror.
-ARG APPROVED_MODEL_IMAGE=vcr.vercel.com/arman-a87f/asuncion/approved-models@sha256:ab17ebc3a697568a4a3fcafd7af686d7e7e258bda36c7b7e33817da9007356ee
+ARG APPROVED_MODEL_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:ab17ebc3a697568a4a3fcafd7af686d7e7e258bda36c7b7e33817da9007356ee
 FROM ${APPROVED_MODEL_IMAGE} AS approved_models
 
 FROM python:3.13.16-slim-bookworm AS source
