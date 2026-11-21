@@ -12,6 +12,7 @@ from urllib import request as http
 from urllib.error import HTTPError,URLError
 
 from flask import Blueprint,Response,abort,current_app,flash,redirect,render_template,request,session,url_for
+from werkzeug.exceptions import ServiceUnavailable
 from werkzeug.security import check_password_hash,generate_password_hash
 import account_management
 import account_profiles
@@ -23,6 +24,12 @@ ID=re.compile(r'^[0-9a-f]{64}$')
 
 
 def enabled():return os.environ.get('PSMS_ACCOUNT_OTP_ENABLED')=='1'
+
+
+def forgot_enabled():
+    return enabled() or account_recovery.enabled()
+
+
 def api():return current_app.extensions['asuncion_otp_api']
 def mac(value):
     secret=current_app.secret_key
@@ -73,11 +80,19 @@ def state(application,ids):
 
 def send_message(email,subject,text):
     """One server-side TLS call; no retries, response-body or secret logging."""
-    key=os.environ.get('BREVO_API_KEY','');sender=os.environ.get('BREVO_SENDER_EMAIL','')
-    if (not enabled() or not key or len(key)>512 or any(ord(c)<33 or ord(c)>126 for c in key)
+    name='Asuncion Supply Management'
+    if enabled():
+        key=os.environ.get('BREVO_API_KEY','')
+        sender=os.environ.get('BREVO_SENDER_EMAIL','')
+    else:
+        try:
+            key,sender,name=account_recovery.configuration()
+        except ServiceUnavailable:
+            raise account_recovery.DeliveryFailure(False) from None
+    if (not key or len(key)>512 or any(ord(c)<33 or ord(c)>126 for c in key)
         or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[A-Za-z]{2,}',sender)):
         raise account_recovery.DeliveryFailure(False)
-    payload=dict(sender=dict(email=sender,name='Asuncion Supply Management'),to=[dict(email=email)],subject=subject,textContent=text)
+    payload=dict(sender=dict(email=sender,name=name),to=[dict(email=email)],subject=subject,textContent=text)
     req=http.Request('https://api.brevo.com/v3/smtp/email',data=json.dumps(payload).encode(),method='POST',
         headers={'api-key':key,'Content-Type':'application/json','Accept':'application/json'})
     try:
@@ -95,6 +110,8 @@ def send_message(email,subject,text):
 
 
 def issue(username,email,kind,expected_hash=None,authenticated=False):
+    if kind=='forgot' and not enabled():
+        account_recovery.configuration()
     challenge=secrets.token_hex(32);code=f'{secrets.randbelow(1000000):06d}'
     peer=mac('otp-peer:'+str(request.remote_addr))
     identity=mac('otp-identity:'+username+'\0'+email)
@@ -103,7 +120,8 @@ def issue(username,email,kind,expected_hash=None,authenticated=False):
     if recipient:
         status='accepted';message=''
         try:message=send_message(recipient['email'],'Asuncion: '+('Gmail activation code' if kind=='activate' else 'verification code'),
-            'Your one-time code is '+code+'. It expires exactly 180 seconds after issuance and permits two incorrect attempts. Never share it. No password is included.')
+            'Your one-time code is '+code+'. It expires exactly 180 seconds after issuance and permits two incorrect attempts. Never share it. No password is included.'
+            + (' Enter it on the same Forgot Password page at '+account_recovery.ORIGIN+'/password-otp.' if kind=='forgot' else ''))
         except account_recovery.DeliveryFailure as error:status='unknown' if error.ambiguous else 'failed'
         finally:code=None
         rpc('delivery',(challenge,status,message),authenticated)
@@ -155,9 +173,10 @@ def shield(handler):
 
 @bp.route('/password-otp',methods=['GET','POST'])
 def public():
-    if not enabled():abort(503,description='OTP recovery is not enabled.')
     kind=request.args.get('mode','forgot')
     if kind not in ('forgot','activate','verify'):abort(400)
+    if not (forgot_enabled() if kind=='forgot' else enabled()):
+        abort(503,description='OTP recovery is not enabled for this operation.')
     if session.get('logged_in') is True and kind!='verify':
         return redirect(url_for('account'))
     if request.method=='POST':

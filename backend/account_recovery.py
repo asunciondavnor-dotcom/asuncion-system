@@ -17,7 +17,7 @@ import account_management
 import account_profiles
 
 TOKEN=re.compile(r'^[0-9a-f]{64}$')
-ORIGIN='https://asuncion-one.vercel.app'
+ORIGIN='https://asuncion-frontend-ten.vercel.app'
 bp=Blueprint('account_recovery',__name__)
 def api():return current_app.extensions['asuncion_recovery_api']
 

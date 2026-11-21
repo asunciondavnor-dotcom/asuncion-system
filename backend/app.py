@@ -101,6 +101,7 @@ def inject_layout_context():
         'password_client_policy': account_management.password_client_policy,
         'email_recovery_enabled': account_recovery.enabled(),
         'otp_enabled': account_otp.enabled(),
+        'forgot_password_enabled': account_otp.forgot_enabled(),
         'current_account': dict(account) if account else None,
         'sync_topics': live_updates.topics_for_page,
         'record_pagination': getattr(g,'psms_pagination',None),
