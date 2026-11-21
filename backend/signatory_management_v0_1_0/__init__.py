@@ -159,8 +159,7 @@ def _admin(con):
     # Same lock order as account/session operations. SHARE prevents disable,
     # demotion or revocation from racing this authorized configuration transaction.
     account = con.execute("select id from public.users where id=? and role='Admin' and status='Active' for share", (uid,)).fetchone()
-    active = con.execute('''select user_id from public.auth_sessions where token_hash=? and user_id=?
-        and revoked_at is null and expires_at>clock_timestamp() for share''', (digest, uid)).fetchone()
+    active = sessions.locked_actor(con,uid,digest)
     if not account or not active:
         raise Forbidden('Active Administrator account required.')
     return uid

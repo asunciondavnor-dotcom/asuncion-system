@@ -60,7 +60,7 @@ def creation_receipt(api, username):
     import server_sessions_v0_1_0 as sessions
     with connection(api) as (con,uid):
         actor=con.execute('select role,status from users where id=?',(uid,)).fetchone()
-        token=con.execute('select user_id from auth_sessions where user_id=? and token_hash=? and revoked_at is null and expires_at>clock_timestamp()',
+        token=con.execute('select id from psms_session_gate.account(?,?)',
                           (uid,sessions.token_hash(session.get(sessions.COOKIE_KEY)))).fetchone()
         if not actor or actor['role']!='Admin' or actor['status']!='Active' or not token:abort(403)
         return bool(con.execute('select id from users where username=?',(username,)).fetchone())
@@ -177,7 +177,7 @@ def deactivate(api, target_id, reason):
         changed = con.execute('select psms_accounts.deactivate_user_v1(?,?) as changed',
                               (target_id, reason)).fetchone()
         saved = con.execute('select status from users where id=?', (target_id,)).fetchone()
-        pending = con.execute('select exists(select 1 from public.auth_sessions where user_id=? and revoked_at is null) as pending',
+        pending = con.execute('select psms_session_gate.employee_sessions_pending(?) as pending',
                               (target_id,)).fetchone()
         if not changed or changed['changed'] is not True or not saved or saved['status'] != 'Inactive' or not pending or pending['pending']:
             raise RuntimeError('Account deactivation and session revocation were not confirmed.')

@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>Property Acknowledgement Receipt {{ row.no }}</h2>
+  <p>{{ row.status }} · {{ 'Recipient acknowledgement recorded' if acknowledged else 'Awaiting recipient acknowledgement' }}</p>
+  <dl>
+    <dt>Property number</dt><dd>{{ item.property_no }}</dd>
+    <dt>Item</dt><dd>{{ item.item }} — {{ item.description }}</dd>
+    <dt>Stock code</dt><dd>{{ item.item_code }}</dd>
+    <dt>Quantity and unit value</dt><dd>{{ item.qty }} {{ item.unit }} · PHP {{ '%.2f'|format(item.unit_cost) }}</dd>
+    <dt>Acquisition date</dt><dd>{{ item.acquisition_date }}</dd>
+    <dt>Source</dt><dd>{{ item.source_po }} / {{ item.source_iar }}</dd>
+    <dt>Accountable recipient</dt><dd>{{ item.recipient_name }}, {{ item.recipient_position }}, {{ item.recipient_office }}</dd>
+  </dl>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('ris_ics') }}">Back to issuance records</a>
+    {% if row.status == 'Approved' %}
+    <a class="btn blue" href="{{ url_for('ris_ics_print', id=row.id) }}">Print approved PAR</a>
+    {% elif row.status == 'For Review' %}
+      {% if session.get('user_id') == item.recipient_id and not acknowledged %}
+      <form method="post" action="{{ url_for('par_acknowledge', id=row.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label><input type="checkbox" name="acknowledge" value="yes" required> I received the identified property and acknowledge custody.</label>
+        <button class="btn primary" type="submit">Acknowledge receipt</button>
+      </form>
+      {% elif session.get('role') == 'Admin' and acknowledged %}
+      <form method="post" action="{{ url_for('ris_ics_approve', id=row.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label><input type="checkbox" name="review_confirm" value="yes" required> I confirmed the property number, custody and acquisition details.</label>
+        <button class="btn primary" type="submit">Approve PAR</button>
+      </form>
+      {% endif %}
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

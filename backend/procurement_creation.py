@@ -94,29 +94,14 @@ def create_nlp(api,identifier):
 
 def create_iar(api, identifier):
     import revised_procurement_v1 as revised_procurement
-    secure_receiving=revised_procurement.enabled(api)
-    if not secure_receiving:abort(409,description='IAR creation requires the authorized procurement workflow.')
-    with locked_parent(api,'po',identifier,'iar','po_id') as (con,row,existing):
-        eligible=None
-        if row and not existing:
-            if secure_receiving:
-                # The restricted parent helper validated and share-locked the
-                # approved NLP evidence in this same transaction. The backend
-                # deliberately has no NLP UPDATE privilege for a direct lock.
-                eligible=row
-            else:
-                eligible=con.execute("""select id from nlp where po_id=? and status='Approved'
-                    and result in ('Acceptable','Needs Review') for share""",(identifier,)).fetchone()
-        if existing or not row or row['status']!='Approved' or not eligible:
-            flash('The selected PO is not eligible for IAR creation or already has an IAR.')
-            return redirect(url_for('iar'))
-        no=api['next_document_no']('IAR','IAR','iar',connection=con)
-        items=api['assign_item_identifiers'](api['parse_items'](row['items']),'_IAR Item ID',no)
-        import iar_receiving
-        try:items=iar_receiving.prepare(items,api['parse_items'](row['items']))
-        except ValueError as error:abort(422,description=str(error))
-        con.execute('insert into iar(no,po_id,status,created_at,items) values(?,?,?,?,?)',
-                    (no,row['id'],'For Review',api['now'](),json.dumps(items,default=str)))
-        api['log']('Created IAR','IAR',no,'IAR created for review; inventory is updated only after approval',connection=con)
-    flash('IAR created. Record actual delivery and inspection findings before approval; no stock was added.')
-    return redirect(url_for('iar'))
+
+    if not revised_procurement.enabled(api):
+        abort(409, description='IAR creation requires the authorized procurement workflow.')
+    po_id = revised_procurement.identifier(identifier)
+    try:
+        with api['durable_ocr'].transaction(api) as (con, _):
+            result = con.execute('select * from psms_workflow.create_iar(?)', (po_id,)).fetchone()
+    except Exception as error:
+        return api['workflow_error'](error, 'iar')
+    flash('IAR created for inspection.' if result['changed'] else 'An IAR already exists for this PO.')
+    return redirect(url_for('iar_review', id=result['id']))

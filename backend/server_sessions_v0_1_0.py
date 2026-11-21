@@ -6,8 +6,10 @@ write uses an explicit caller-supplied connection factory; never a default DSN.
 """
 import hashlib
 import hmac
+import os
 import re
 import secrets
+import time
 
 VERSION='0.1.1-candidate'
 COOKIE_KEY='_auth_sid'
@@ -86,7 +88,7 @@ def session_diagnostics(factory):
         row=con.execute("""select
           to_regclass('public.auth_sessions') is not null as sessions_table,
           to_regclass('public.users') is not null as users_table,
-          to_regprocedure('public.psms_auth_session_permissions_ready()') is not null as readiness_function,
+          to_regprocedure('psms_session_gate.ready()') is not null as readiness_function,
           to_regprocedure('public.psms_revoke_auth_sessions()') is not null as revocation_function,
           has_schema_privilege('public','USAGE') as schema_usage,
           exists(select 1 from pg_catalog.pg_trigger t
@@ -97,7 +99,7 @@ def session_diagnostics(factory):
         result['checks'].update({key:bool(row and row.get(key) is True) for key in keys})
         if result['checks']['sessions_table']:
             row=con.execute("""select c.relrowsecurity as registry_rls,
-              has_table_privilege(c.oid,'SELECT') as registry_select,
+              not has_any_column_privilege(c.oid,'SELECT,INSERT,UPDATE') as registry_private,
               (select count(*)=5 from pg_catalog.pg_attribute a where a.attrelid=c.oid
                 and not a.attisdropped and (a.attname,a.atttypid) in (
                   ('token_hash','text'::regtype),('user_id','bigint'::regtype),
@@ -105,15 +107,7 @@ def session_diagnostics(factory):
                   ('revoked_at','timestamptz'::regtype))) as registry_columns
               from pg_catalog.pg_class c where c.oid=to_regclass('public.auth_sessions')""").fetchone()
             result['checks'].update({key:bool(row and row.get(key) is True)
-                                     for key in ('registry_rls','registry_select','registry_columns')})
-            if result['checks']['registry_columns']:
-                row=con.execute("""select
-                  has_column_privilege('public.auth_sessions','token_hash','INSERT')
-                  and has_column_privilege('public.auth_sessions','user_id','INSERT')
-                  and has_column_privilege('public.auth_sessions','expires_at','INSERT') as registry_insert,
-                  has_column_privilege('public.auth_sessions','revoked_at','UPDATE') as registry_revoke""").fetchone()
-                result['checks'].update({key:bool(row and row.get(key) is True)
-                                         for key in ('registry_insert','registry_revoke')})
+                                     for key in ('registry_rls','registry_private','registry_columns')})
         if result['checks']['users_table']:
             row=con.execute("""select has_table_privilege('public.users','SELECT') as users_select,
               has_any_column_privilege('public.users','UPDATE') as users_row_lock""").fetchone()
@@ -123,7 +117,7 @@ def session_diagnostics(factory):
             result['failure']='readiness:missing_function'
         else:
             row=con.execute("""select has_function_privilege(
-              'public.psms_auth_session_permissions_ready()','EXECUTE') as helper_execute""").fetchone()
+              'psms_session_gate.ready()','EXECUTE') as helper_execute""").fetchone()
             result['checks']['helper_execute']=bool(row and row.get('helper_execute') is True)
             if not result['checks']['helper_execute']:
                 result['failure']='readiness:permission_denied'
@@ -156,7 +150,7 @@ def token_hash(token):
 def _ready(con):
     # Read-only shared database contract; applies to validation as well as writes.
     # A failed capability check blocks copied cookies, not merely the action.
-    row=con.execute('select public.psms_auth_session_permissions_ready() as ready').fetchone()
+    row=con.execute('select psms_session_gate.ready() as ready').fetchone()
     if not row or row['ready'] is not True:
         raise Unavailable('Session permissions or migration are unavailable.', reason='readiness:contract_rejected')
 
@@ -171,7 +165,7 @@ def _authorized(account):
     return bool(account and account.get('status')=='Active' and account.get('role') in ('Admin','Staff','Inspector'))
 
 def issue(factory,user_id,expected_password,ttl_seconds):
-    if type(user_id) is not int or user_id<=0 or type(ttl_seconds) is not int or not 0<ttl_seconds<2147483647:
+    if type(user_id) is not int or user_id<=0 or type(ttl_seconds) is not int or not 0<ttl_seconds<=2678400:
         raise Rejected('Invalid session request.')
     con=None
     stage='connect'
@@ -186,9 +180,14 @@ def issue(factory,user_id,expected_password,ttl_seconds):
             raise Rejected('Account changed during authentication.')
         token=secrets.token_urlsafe(32)
         stage='session_insert'
-        con.execute("""insert into public.auth_sessions(token_hash,user_id,expires_at)
-                       values(?,?,clock_timestamp()+(? * interval '1 second'))""",
-                    (token_hash(token),user_id,ttl_seconds))
+        digest=token_hash(token)
+        signed_at=int(time.time())
+        key=os.environ.get('PSMS_SESSION_ISSUANCE_KEY','')
+        if not re.fullmatch(r'[0-9a-f]{64}',key):
+            raise Unavailable('Session issuance is unavailable.',reason='readiness:contract_rejected')
+        message=f'asuncion-session-v1:{user_id}:{digest}:{ttl_seconds}:{signed_at}'.encode('ascii')
+        proof=hmac.digest(bytes.fromhex(key),message,'sha256').hex()
+        con.execute('select psms_session_gate.issue(?,?,?,?,?)',(user_id,digest,ttl_seconds,signed_at,proof))
         stage='commit';con.commit()
         return {k:account[k] for k in ('id','username','role','status')},token
     except Rejected:raise
@@ -220,11 +219,7 @@ def account_for_session(factory,token,user_id):
         stage='readiness'
         _ready(con)
         stage='account_read'
-        return con.execute("""select u.id,u.username,u.role,u.status,u.full_name,u.display_name,u.created_at,u.last_login from public.auth_sessions s
-          join public.users u on u.id=s.user_id
-          where s.token_hash=? and s.user_id=? and s.revoked_at is null
-            and s.expires_at>clock_timestamp() and u.status='Active'
-            and u.role in ('Admin','Staff','Inspector')""",(digest,user_id)).fetchone()
+        return con.execute('select * from psms_session_gate.account(?,?)',(user_id,digest)).fetchone()
     except Unavailable as error:
         primary_failure=error
         raise
@@ -243,12 +238,8 @@ def revoke_current(factory,token,user_id,audit=None):
     con=None
     try:
         con=factory();_ready(con)
-        changed=con.execute("""update public.auth_sessions set revoked_at=clock_timestamp()
-          where token_hash=? and user_id=? and revoked_at is null""",(digest,user_id)).rowcount
-        persisted=con.execute('select revoked_at from public.auth_sessions where token_hash=? and user_id=?',
-                              (digest,user_id)).fetchone()
-        # Confirm state even for an idempotent concurrent/already-revoked call.
-        if changed not in (0,1) or not persisted or persisted['revoked_at'] is None:
+        persisted=con.execute('select psms_session_gate.revoke(?,?) as revoked',(user_id,digest)).fetchone()
+        if not persisted or not persisted['revoked']:
             raise Unavailable('Session revocation could not be confirmed.')
         if audit:audit(con)
         con.commit()
@@ -267,13 +258,13 @@ def replace_password(factory,token,user_id,expected_password,new_hash,audit=None
         stage='account_lock'
         account=con.execute('select id,password,role,status from users where id=? for update',(user_id,)).fetchone()
         stage='session_lookup'
-        active=con.execute("""select user_id from public.auth_sessions where token_hash=?
-             and user_id=? and revoked_at is null and expires_at>clock_timestamp() for update""",(digest,user_id)).fetchone()
+        active=locked_actor(con,user_id,digest)
         if (not active or not _authorized(account)
                 or not hmac.compare_digest(str(account['password']),expected_password)):
             raise Rejected('Authentication changed; sign in again.')
         stage='password_update'
-        if con.execute('update users set password=? where id=?',(new_hash,user_id)).rowcount!=1:
+        if not con.execute('select psms_session_gate.change_password(?,?,?,?,?) as changed',
+                           (user_id,digest,user_id,expected_password,new_hash)).fetchone()['changed']:
             raise Unavailable('Password update could not be confirmed.')
         stage='revocation_check';_confirmed_password(con,user_id,new_hash)
         # Reviewed migration trigger revokes ALL sessions atomically with this
@@ -296,10 +287,13 @@ def replace_password(factory,token,user_id,expected_password,new_hash,audit=None
 
 def _confirmed_password(con,user_id,new_hash):
     row=con.execute('select password from users where id=?',(user_id,)).fetchone()
-    pending=con.execute('select exists(select 1 from public.auth_sessions where user_id=? and revoked_at is null) as pending',
-                        (user_id,)).fetchone()
+    pending=con.execute('select psms_session_gate.employee_sessions_pending(?) as pending',(user_id,)).fetchone()
     if not row or not hmac.compare_digest(str(row['password']),new_hash) or pending['pending']:
         raise Unavailable('Credential revocation could not be confirmed.')
+
+
+def locked_actor(con,user_id,digest):
+    return con.execute('select * from psms_session_gate.actor(?,?)',(user_id,digest)).fetchone()
 
 
 def reset_password(factory,user_id,new_hash,audit=None,*,actor_id=None,token=None):
@@ -319,8 +313,7 @@ def reset_password(factory,user_id,new_hash,audit=None,*,actor_id=None,token=Non
         actor=con.execute('select id,username,role,status from users where id=? for update',(actor_id,)).fetchone()
         if not actor or actor['role']!='Admin' or actor['status']!='Active':
             raise Rejected('Administrator authorization changed.')
-        active=con.execute('''select user_id from public.auth_sessions where token_hash=?
-            and user_id=? and revoked_at is null and expires_at>clock_timestamp() for share''',(digest,actor_id)).fetchone()
+        active=locked_actor(con,actor_id,digest)
         if not active:raise Rejected('Administrator session changed.')
         # The predicate prevents locking another Admin as a reset target and
         # is rechecked by PostgreSQL after any concurrent target modification.
@@ -328,7 +321,8 @@ def reset_password(factory,user_id,new_hash,audit=None,*,actor_id=None,token=Non
             and role in ('Staff','Inspector') and status='Active' for update''',(user_id,)).fetchone()
         if not account or account['role'] not in ('Staff','Inspector') or account['status']!='Active':
             raise Rejected('An active employee account is required.')
-        if con.execute('update users set password=? where id=?',(new_hash,user_id)).rowcount!=1:
+        if not con.execute('select psms_session_gate.change_password(?,?,?,?,?) as changed',
+                           (actor_id,digest,user_id,None,new_hash)).fetchone()['changed']:
             raise Unavailable('Password reset could not be confirmed.')
         _confirmed_password(con,user_id,new_hash)
         if audit:audit(con,account)

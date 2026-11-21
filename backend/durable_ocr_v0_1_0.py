@@ -25,9 +25,13 @@ def _active(con):
     uid=_uid(); digest=sessions.token_hash(session.get(sessions.COOKIE_KEY))
     if not digest:abort(403)
     sessions._ready(con)
-    user=con.execute("select id from users where id=? and status='Active' and role in ('Admin','Staff','Inspector') for share",(uid,)).fetchone()
-    token=con.execute('select user_id from auth_sessions where user_id=? and token_hash=? and revoked_at is null and expires_at>clock_timestamp() for share',(uid,digest)).fetchone()
-    if not user or not token:abort(403)
+    if not sessions.locked_actor(con,uid,digest):abort(403)
+    return uid
+
+def bind_active_actor(con):
+    uid = _active(con)
+    con.execute("select set_config('psms.workbook_actor',?,true)",
+                (json.dumps(dict(uid=uid, sid=sessions.token_hash(session.get(sessions.COOKIE_KEY)))),))
     return uid
 
 @contextmanager
@@ -38,10 +42,8 @@ def transaction(api, *, read_committed=False):
             # A creator waiting on a parent must see the preceding creator's
             # committed child in its subsequent existence statement.
             con.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
-        uid=_active(con)
+        uid=bind_active_actor(con)
         revised_procurement.apply_release_context(con)
-        con.execute("select set_config('psms.workbook_actor',?,true)",
-                    (json.dumps(dict(uid=uid,sid=sessions.token_hash(session.get(sessions.COOKIE_KEY)))),))
         yield con,uid
         con.commit()
     except Exception:con.rollback();raise

@@ -2237,8 +2237,6 @@ def login():
             if (user.get('status') != 'Active'
                     or user.get('role') not in ('Admin', 'Staff', 'Inspector')):
                 valid = False
-            if valid and not (stored.startswith('scrypt:') or stored.startswith('pbkdf2:')):
-                exec_db('update users set password=? where id=?', (generate_password_hash(password), user['id']))
         if valid:
             try:
                 authenticated, sid = server_sessions.issue(
@@ -3175,7 +3173,7 @@ def app_review(id):
         approve_label=f'Approve APP {d["no"]}',
         approval_effect='Approval finalizes this APP and makes its planning record officially approved.',
         back_url=url_for('app_plan'), print_url=url_for('app_print', id=id),
-        can_approve=d.get('status') != 'Approved',
+        can_approve=d.get('status') == 'For Review' and session.get('role') == 'Admin',
     )
 
 @app.route('/app/<int:id>/approve', methods=['POST'])
@@ -3281,7 +3279,7 @@ def pr_review(id):
         approve_url=url_for('pr_approve', id=id), approve_label=f'Approve PR {d["no"]}',
         approval_effect='Approval locks this PR as the original requirement for later PR–PO Review. AOQ upload and approval remain independent.',
         back_url=url_for('pr'), print_url=url_for('pr_print', id=id),
-        can_approve=d.get('status') != 'Approved',
+        can_approve=d.get('status') == 'For Review' and session.get('role') == 'Admin',
     )
 
 @app.route('/pr/<int:id>/approve', methods=['POST'])
@@ -3704,7 +3702,7 @@ def iar_review(id):
         approve_url=url_for('iar_approve', id=id), approve_label=f'Approve IAR {d["no"]}',
         approval_effect='Approval records the inspection findings and posts only accepted quantities to Inventory.',
         back_url=url_for('iar'), print_url=url_for('iar_print', id=id),
-        can_approve=receiving_ready,
+        can_approve=receiving_ready and session.get('role') in ('Admin', 'Inspector'),
         text_blocks=[{'title':'Receiving unavailable','content':receiving_error}] if receiving_error else [],
         receiving_items=receiving_items,
     )
@@ -3715,87 +3713,66 @@ def confirmed_receiving_items(items,form,po_items=None):
     return iar_receiving.confirm(items,form,po_items)
 
 
-def iar_inventory_items(items_json):
-    """Only positive, explicitly accepted stock reaches inventory."""
-    import iar_receiving
-    return iar_receiving.inventory_receipts(parse_items(items_json))
+def workflow_error(error, review, record_id=None):
+    state = getattr(error, 'sqlstate', None)
+    if state in ('PA003', '42501'):
+        abort(403, description='Your active account role cannot perform this workflow action.')
+    if state == 'PA004':
+        abort(404)
+    messages = {
+        'PA001': 'Review the document fields and item quantities before continuing.',
+        'PA002': 'A source document, stock item, or review state changed. Reopen the review.',
+        'PA007': 'The related procurement approval is no longer eligible.',
+        '22007': 'Enter a valid acquisition date.',
+        '22008': 'Enter a valid acquisition date.',
+        '55P03': 'Another transaction is updating this record. Reopen the review before retrying.',
+        '40P01': 'Another transaction is updating this record. Reopen the review before retrying.',
+    }
+    if state in messages:
+        flash(messages[state])
+        return redirect(url_for(review, **({'id': record_id} if record_id is not None else {})))
+    raise error
 
 
 @app.route('/iar/<int:id>/approve', methods=['POST'])
 def iar_approve(id):
+    from hashlib import sha256
+
     guard = require_review_confirmation('iar_review', id)
     if guard:
         return guard
-    con = conn()
+    if not revised_procurement.enabled(globals()):
+        abort(409, description='Receiving requires the authorized procurement workflow.')
+    row = q('''select i.items, i.status, p.items as po_items from iar i
+               join po p on p.id=i.po_id where i.id=?''', (id,), one=True)
+    if not row:
+        abort(404)
+    if row['status'] == 'Approved':
+        inspection = None
+        hashes = (None, None)
+    else:
+        try:
+            inspection = confirmed_receiving_items(parse_items(row['items']), request.form,
+                                                    parse_items(row['po_items']))
+        except ValueError as error:
+            flash(str(error))
+            return redirect(url_for('iar_review', id=id))
+        fields = ('_IAR Item ID', 'delivered_qty', 'received_qty', 'rejected_qty', 'damaged_qty',
+                  'inspection_findings', '_Inventory Category')
+        inspection = [dict({key: item[key] for key in fields if key in item},
+                           property_class=request.form.get(f'property_class_{index}', ''),
+                           acquisition_date=request.form.get(f'acquisition_date_{index}', ''))
+                      for index, item in enumerate(inspection)]
+        hashes = tuple(sha256(row[key].encode('utf-8')).hexdigest() for key in ('items', 'po_items'))
     try:
-        # Revalidate active actor/session in the same transaction as stock writes.
-        uid=durable_ocr._active(con)
-        # Repeated/concurrent requests must check status after obtaining this lock.
-        row = con.execute('''select i.*, p.no po_no from iar i
-                             join po p on p.id=i.po_id where i.id=?
-                             for update of i''', (id,)).fetchone()
-        if not row:
-            con.rollback()
-            flash('IAR record not found.')
-            return redirect(url_for('iar'))
-        if row['status'] == 'Approved':
-            con.rollback()
-            flash('IAR is already approved.')
-            return redirect(url_for('iar_review', id=id))
-        if row['status']!='For Review':
-            con.rollback();abort(409,description='Only an IAR For Review can record inspection approval.')
-        if not revised_procurement.enabled(globals()):
-            con.rollback();abort(409,description='Receiving requires the authorized procurement workflow.')
-        revised_procurement.apply_release_context(con)
-        con.execute("select set_config('psms.workbook_actor',?,true)",
-                    (json.dumps({'uid':uid,'sid':server_sessions.token_hash(session.get(server_sessions.COOKIE_KEY))}),))
-        try:
-            receiving_lock=('lock_po_for_workflow_v4' if revised_procurement.tolerance_contract_ready(globals())
-                            else 'lock_po_for_workflow_v2')
-            po=con.execute('select * from '+revised_procurement.api_schema()+'.'+receiving_lock+'(?::bigint,?::text)',
-                           (row['po_id'],'iar')).fetchone()
-        except Exception as error:
-            state=getattr(error,'sqlstate',None)
-            if state in ('PA002','PA003','PA004','PA007'):
-                abort({'PA002':409,'PA003':403,'PA004':404,'PA007':409}[state],description='The approved PO or its authorized verification is no longer eligible for receiving.')
-            raise
-        if not po or po['status']!='Approved':abort(409,description='An approved eligible PO is required.')
-        try:
-            confirmed = confirmed_receiving_items(parse_items(row['items']), request.form,parse_items(po['items']))
-            recorded_at=now()
-            for item in confirmed:
-                item['_Inspected By']=session.get('username')
-                item['_Inspection Recorded At']=recorded_at
-            receipts = iar_inventory_items(json.dumps(confirmed))
-        except ValueError as exc:
-            con.rollback()
-            flash(str(exc))
-            return redirect(url_for('iar_review', id=id))
+        with durable_ocr.transaction(globals()) as (con, _):
+            result = con.execute('select * from psms_workflow.approve_iar(?, ?, ?, ?::jsonb)',
+                                 (id, *hashes, json.dumps(inspection))).fetchone()
+    except Exception as error:
+        return workflow_error(error, 'iar_review', id)
+    flash('Inspection approved and accepted stock posted.' if result['changed'] else 'IAR is already approved.')
+    return redirect(url_for('iar_review', id=id))
 
-        if json.dumps(confirmed, default=str) != json.dumps(parse_items(row['items']), default=str):
-            if con.execute('update iar set items=? where id=?', (json.dumps(confirmed, default=str), id)).rowcount != 1:
-                raise RuntimeError('Actual receipt quantities were not recorded.')
-
-        for item_name, description, cat, qty, unit, unit_cost, source_dataset_id in receipts:
-            item_code = next_document_no('INVENTORY', 'INV', 'inventory', column='item_code', width=5, connection=con)
-            result = con.execute(
-                '''insert into inventory(item_code,item,description,category,qty,unit,source_po,status,created_at,unit_cost,source_dataset_record_id)
-                values(?,?,?,?,?,?,?,?,?,?,?)''',
-                (item_code, item_name, description, cat, qty, unit, row['po_no'], 'Available', now(), unit_cost, source_dataset_id)
-            )
-            if result.rowcount != 1:
-                raise RuntimeError('IAR inventory receipt was not inserted.')
-        if con.execute('update iar set status=? where id=?', ('Approved', id)).rowcount != 1:
-            raise RuntimeError('IAR approval status was not updated.')
-        log('Approved IAR', 'IAR', row['no'], f'Inspection approved; {len(receipts)} accepted stock line(s) posted. Rejected, damaged and missing quantities remain in IAR evidence.', connection=con)
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
-    flash('Inspection approved. Only accepted stock quantities were added to inventory.')
-    return redirect(url_for('iar'))
 
 @app.route('/iar/<int:id>/print')
 def iar_print(id):
@@ -3948,73 +3925,94 @@ def inventory():
 
 @app.route('/ris-ics', methods=['GET','POST'])
 def ris_ics():
-    if request.method == 'POST':
-        from aoq_flexible import review_number
+    from uuid import UUID, uuid4
+    from aoq_flexible import review_number
 
-        typ = (request.form.get('type') or '').upper().strip()
-        if typ not in ('RIS', 'ICS'):
-            flash('Choose RIS for consumables or ICS for equipment.')
+    if request.method == 'POST':
+        try:
+            request_id = UUID(request.form.get('request_id', ''))
+            selected = request.form.getlist('inventory_id')
+            if (not 1 <= len(selected) <= 200 or len(set(selected)) != len(selected)
+                    or any(not re.fullmatch(r'[1-9][0-9]{0,18}', value)
+                           or int(value) > 9223372036854775807 for value in selected)):
+                raise ValueError
+            items = []
+            for value in sorted(selected, key=int):
+                inputs = request.form.getlist(f'issue_qty_{value}')
+                quantity = review_number(inputs[0]) if len(inputs) == 1 else None
+                if quantity is None:
+                    raise ValueError
+                items.append(dict(inventory_id=int(value), qty=inputs[0]))
+        except ValueError:
+            flash('Select valid inventory items and quantities.')
             return redirect(url_for('ris_ics'))
-        office = (request.form.get('office') or 'General Services Office').strip()
-        selected_ids = request.form.getlist('inventory_id')
-        if not selected_ids or any(not re.fullmatch(r'[0-9]+', str(x)) or int(x) <= 0 for x in selected_ids):
-            flash('Select valid available inventory items.')
-            return redirect(url_for('ris_ics'))
-        selected_ids = [int(x) for x in selected_ids]
-        if len(set(selected_ids)) != len(selected_ids):
-            flash('Select each inventory item only once.')
-            return redirect(url_for('ris_ics'))
-        expected_category = 'Equipment' if typ == 'ICS' else 'Consumable'
-        items = []
-        for inventory_id in selected_ids:
-            inv = q('select * from inventory where id=? and qty>0 and category=?', (inventory_id, expected_category), one=True)
-            if not inv:
-                flash('A selected inventory item is unavailable or has the wrong category. Review the selection.')
-                return redirect(url_for('ris_ics'))
-            requested_qty = review_number(request.form.get(f'issue_qty_{inventory_id}'))
-            available = review_number(inv['qty'])
-            if (requested_qty is None or requested_qty <= 0 or available is None
-                    or requested_qty > available or (typ == 'ICS' and requested_qty > 1)):
-                flash('Enter a valid positive quantity within available stock (at most one per ICS item).')
-                return redirect(url_for('ris_ics'))
-            items.append({
-                'inventory_id': inv['id'],
-                'item_code': inv['item_code'],
-                'item': inv['item'],
-                'description': inv['description'] or '',
-                'category': inv['category'],
-                'qty': requested_qty,
-                'unit': inv['unit'] or 'unit',
-                'unit_cost': to_float(inv['unit_cost']),
-                'available_before': to_float(inv['qty']),
-                'source_po': inv['source_po'] or '',
-            })
-        if not items:
-            flash(f'No available {expected_category.lower()} inventory items were selected.')
-            return redirect(url_for('ris_ics'))
-        with durable_ocr.transaction(globals()) as (con, uid):
-            no = next_document_no(typ, typ, 'ris_ics', connection=con)
-            items = assign_item_identifiers(items, '_Issue Item ID', no)
-            con.execute('insert into ris_ics(no,type,office,status,created_at,items) values(?,?,?,?,?,?)',
-                        (no, typ, office, 'For Review', now(), json.dumps(items, default=str)))
-            log(f'Created {typ}', 'RIS/ICS', no, f'{len(items)} inventory item(s) prepared for {office}', connection=con)
-        flash(f'{no} created. Review all selected inventory items before approval.')
-        return redirect(url_for('ris_ics'))
+        kind = request.form.get('type', '').strip().upper()
+        office = request.form.get('office', '').strip()
+        try:
+            with durable_ocr.transaction(globals()) as (con, _):
+                result = con.execute('select * from psms_workflow.create_issue(?, ?, ?::jsonb, ?::uuid)',
+                                     (kind, office, json.dumps(items), str(request_id))).fetchone()
+        except Exception as error:
+            return workflow_error(error, 'ris_ics')
+        flash(f"{result['no']} is ready for review.")
+        return redirect(url_for('ris_ics_review', id=result['id']))
 
     rows = paged_q('select * from ris_ics order by id desc')
-    consumables = q("select * from inventory where category='Consumable' and qty>0 order by lower(item)")
-    equipment = q("select * from inventory where category='Equipment' and qty>0 order by lower(item)")
+    consumables = q("select * from inventory where category='Consumable' and status='Available' and source_iar_id is not null and qty>0 order by lower(item)")
+    equipment = q("""select * from inventory where property_class='Semi-expendable'
+                    and status='Available' and qty>=1 order by lower(item)""")
+    property_items = q("""select id,item,item_code,qty,unit_cost from inventory where property_class='PPE'
+                         and status='Available' and qty>=1 order by lower(item)""")
+    recipients = q("""select p.user_id,p.full_name,p.position,p.office from psms_workflow.par_people p
+                     join public.users u on u.id=p.user_id and u.status='Active' where p.can_receive
+                     order by p.full_name,p.user_id""")
     return render_template('ris_ics.html', active='ris', rows=rows, consumables=consumables,
-                           equipment=equipment, title='RIS/ICS')
+                           equipment=equipment, property_items=property_items, recipients=recipients,
+                           request_ids={kind: uuid4() for kind in ('RIS','ICS','PAR')}, title='RIS/ICS/PAR')
+
+
+@app.post('/ris-ics/par')
+def par_create():
+    from uuid import UUID
+    try:
+        stock_id = revised_procurement.identifier(request.form.get('property_stock'))
+        recipient_id = revised_procurement.identifier(request.form.get('property_recipient'))
+        request_id = str(UUID(request.form.get('request_id', '')))
+    except ValueError:
+        abort(400, description='Select a property item and an authorized recipient.')
+    try:
+        with durable_ocr.transaction(globals()) as (con, _):
+            result = con.execute('select * from psms_workflow.create_par(?,?,?,?::uuid)',
+                (stock_id, recipient_id, request.form.get('property_no'), request_id)).fetchone()
+    except Exception as error:
+        return workflow_error(error, 'ris_ics')
+    return redirect(url_for('ris_ics_review', id=result['id']))
+
+
+@app.post('/ris-ics/<int:id>/acknowledge')
+def par_acknowledge(id):
+    if request.form.get('acknowledge') != 'yes':
+        abort(400, description='Confirm that you received the listed property.')
+    try:
+        with durable_ocr.transaction(globals()) as (con, _):
+            con.execute('select psms_workflow.acknowledge_par(?)', (id,))
+    except Exception as error:
+        return workflow_error(error, 'ris_ics_review', id)
+    flash('Recipient acknowledgement recorded.')
+    return redirect(url_for('ris_ics_review', id=id))
 
 @app.route('/ris-ics/<int:id>/view')
 def ris_ics_review(id):
     row = q('select * from ris_ics where id=?', (id,), one=True)
     if not row:
-        flash('RIS/ICS record not found.')
+        flash('Issuance record not found.')
         return redirect(url_for('ris_ics'))
     d = dict(row)
     items = parse_items(d.get('items'))
+    if d.get('type') == 'PAR':
+        acknowledged = q('select psms_workflow.par_acknowledged(?) as ready', (id,), one=True)['ready']
+        return render_template('par_review.html', active='ris', title=d['no'], row=d, item=items[0],
+                               acknowledged=acknowledged)
     full_name = 'Requisition and Issue Slip' if d.get('type') == 'RIS' else 'Inventory Custodian Slip'
     return render_review_page(
         active='ris', title=f'Review {d["no"]}', document_type=full_name,
@@ -4030,102 +4028,27 @@ def ris_ics_review(id):
         approve_url=url_for('ris_ics_approve', id=id), approve_label=f'Approve {d["no"]}',
         approval_effect=f'Approval finalizes this {d.get("type")} and deducts the issued quantities from Inventory.',
         back_url=url_for('ris_ics'), print_url=url_for('ris_ics_print', id=id),
-        can_approve=d.get('status') != 'Approved',
+        can_approve=d.get('status') == 'For Review' and session.get('role') == 'Admin',
     )
-
-def ris_ics_issue_items(items_json, typ):
-    """Validate the existing one-selection-per-inventory-item document format."""
-    from aoq_flexible import review_number
-
-    if typ not in ('RIS', 'ICS'):
-        raise ValueError('Invalid RIS/ICS document type.')
-    items = parse_items(items_json)
-    if not isinstance(items, list) or not items:
-        raise ValueError('RIS/ICS items are missing or invalid. Review the document.')
-    selected = {}
-    for index, item in enumerate(items, 1):
-        if not isinstance(item, dict):
-            raise ValueError(f'RIS/ICS item {index} is invalid.')
-        raw_id = item.get('inventory_id')
-        if isinstance(raw_id, bool) or not re.fullmatch(r'[0-9]+', str(raw_id)) or int(raw_id) <= 0:
-            raise ValueError(f'RIS/ICS item {index} has an invalid inventory identifier.')
-        inventory_id = int(raw_id)
-        if inventory_id in selected:
-            raise ValueError('An inventory item appears more than once. Correct the document before approval.')
-        qty = review_number(item.get('qty'))
-        if qty is None or qty <= 0 or (typ == 'ICS' and qty > 1):
-            raise ValueError(f'RIS/ICS item {index} requires a valid positive quantity (at most one for ICS).')
-        selected[inventory_id] = (item, qty)
-    return selected
-
 
 @app.route('/ris-ics/<int:id>/approve', methods=['POST'])
 def ris_ics_approve(id):
-    from aoq_flexible import review_number
-
     guard = require_review_confirmation('ris_ics_review', id)
     if guard:
         return guard
-    con = conn()
     try:
-        row = con.execute('select * from ris_ics where id=? for update', (id,)).fetchone()
-        if not row:
-            con.rollback()
-            flash('RIS/ICS record not found.')
-            return redirect(url_for('ris_ics'))
-        if row['status'] == 'Approved':
-            con.rollback()
-            flash('RIS/ICS document is already approved; inventory was not deducted again.')
-            return redirect(url_for('ris_ics_review', id=id))
-        items = ris_ics_issue_items(row['items'], row['type'])
-        inventory = {}
-        expected_category = 'Equipment' if row['type'] == 'ICS' else 'Consumable'
-        # All approvals acquire stock locks in the same order, regardless of item order.
-        # Validate the complete document before applying any deduction.
-        for inventory_id in sorted(items):
-            item, issue_qty = items[inventory_id]
-            inv = con.execute('select * from inventory where id=? for update', (inventory_id,)).fetchone()
-            if not inv:
-                raise ValueError(f'Inventory item {item.get("item_code") or inventory_id} no longer exists.')
-            if inv['category'] != expected_category:
-                raise ValueError(f'Inventory item {inventory_id} has the wrong category for this document.')
-            if item.get('item_code') and item['item_code'] != inv['item_code']:
-                raise ValueError(f'Inventory identifier for item {inventory_id} no longer matches the reviewed document.')
-            if item.get('unit') and item['unit'] != inv['unit']:
-                raise ValueError(f'Inventory unit for item {inventory_id} no longer matches the reviewed document.')
-            available = review_number(inv['qty'])
-            if available is None or available < 0:
-                raise ValueError(f'Available quantity for inventory item {inventory_id} is invalid.')
-            if issue_qty > available:
-                raise ValueError(f'Insufficient quantity for {inv["item_code"]}: requested {issue_qty:g}, available {available:g}.')
-            inventory[inventory_id] = inv
+        with durable_ocr.transaction(globals()) as (con, _):
+            issue = con.execute('select type from public.ris_ics where id=?', (id,)).fetchone()
+            if not issue:
+                abort(404)
+            statement = ('select * from psms_workflow.approve_par(?)' if issue['type'] == 'PAR'
+                         else 'select * from psms_workflow.approve_issue(?)')
+            result = con.execute(statement, (id,)).fetchone()
+    except Exception as error:
+        return workflow_error(error, 'ris_ics_review', id)
+    flash(f"{result['no']} approved." if result['changed'] else f"{result['no']} was already approved.")
+    return redirect(url_for('ris_ics_review', id=id))
 
-        for inventory_id, (item, issue_qty) in items.items():
-            inv = inventory[inventory_id]
-            available = review_number(inv['qty'])
-            remaining = round(available - issue_qty, 4)
-            new_status = 'Available' if remaining > 0 else ('Assigned' if row['type'] == 'ICS' else 'Issued')
-            if con.execute('update inventory set qty=?, status=? where id=?', (remaining, new_status, inventory_id)).rowcount != 1:
-                raise RuntimeError('Inventory quantity was not updated.')
-            movement = con.execute('''insert into inventory_transactions(inventory_id,document_no,transaction_type,qty,unit,office,created_at,created_by)
-                           values(?,?,?,?,?,?,?,?)''',
-                        (inventory_id, row['no'], row['type'], issue_qty, inv['unit'], row['office'], now(), session.get('username', 'admin')))
-            if movement.rowcount != 1:
-                raise RuntimeError('Inventory issuance entry was not inserted.')
-        if con.execute('update ris_ics set status=? where id=?', ('Approved', id)).rowcount != 1:
-            raise RuntimeError('RIS/ICS approval status was not updated.')
-        log(f'Approved {row["type"]}', 'RIS/ICS', row['no'], f'Inventory quantities deducted for {len(items)} item(s)', connection=con)
-        con.commit()
-    except Exception as exc:
-        con.rollback()
-        if isinstance(exc, ui_feedback.DatabaseError):
-            return ui_feedback.database_failure(exc)
-        flash(f'Approval stopped: {exc}')
-        return redirect(url_for('ris_ics_review', id=id))
-    finally:
-        con.close()
-    flash(f'{row["no"]} approved and live inventory quantities were updated.')
-    return redirect(url_for('ris_ics'))
 
 @app.route('/ris-ics/<int:id>/print')
 def ris_ics_print(id):
@@ -4134,6 +4057,10 @@ def ris_ics_print(id):
     if not row:
         abort(404)
     items=parse_items(row['items'])
+    if row['type'] == 'PAR':
+        if row['status'] != 'Approved':
+            abort(409, description='Approve the PAR before printing the official record.')
+        return render_template('print_par.html', row=row, item=items[0], title='Print PAR')
     issue_costs = []
     for item in items:
         unit_cost = parse_currency_decimal(item.get('unit_cost'))
@@ -4151,7 +4078,7 @@ def ris_ics_print(id):
 def reports():
     modules = [
         ('PPMP','ppmp'),('APP','app_plan'),('PR','pr'),('AOQ','aoq'),('PO','po'),
-        ('NLP','nlp'),('IAR','iar'),('Inventory','inventory'),('RIS/ICS','ris_ics')
+        ('NLP','nlp'),('IAR','iar'),('Inventory','inventory'),('RIS/ICS/PAR','ris_ics')
     ]
     aggregations = [('ppmp_total','ppmp','total'),('pr_total','pr','total'),
                     ('po_total','po','total'),('inventory_value','inventory','qty*coalesce(unit_cost,0)')]
@@ -4294,14 +4221,11 @@ def change_password():
         flash('Choose a new password that is different from the current password.','error')
     else:
         try:
-            if os.environ.get('PSMS_ACCOUNT_PASSWORD_RPC')=='1':
-                account_recovery.change_own_password(globals(),str(user['password']),generate_password_hash(new_password))
-            else:
-                server_sessions.replace_password(
-                    conn, session.get(server_sessions.COOKIE_KEY), user_id, str(user['password']),
-                    generate_password_hash(new_password),
-                    audit=lambda con: log('Password Changed', 'Account', user['username'],
-                                          'User changed own password', connection=con))
+            server_sessions.replace_password(
+                conn, session.get(server_sessions.COOKIE_KEY), user_id, str(user['password']),
+                generate_password_hash(new_password),
+                audit=lambda con: log('Password Changed', 'Account', user['username'],
+                                      'User changed own password', connection=con))
         except server_sessions.Rejected:
             session.clear()
             flash('Authentication changed. Please sign in again.')

@@ -8,6 +8,12 @@
 {% for key,label in [('delivered_qty','Delivered'),('received_qty','Accepted'),('rejected_qty','Rejected (includes damaged)'),('damaged_qty','Damaged')] %}<label>{{label}} quantity<input name="{{key}}_{{index}}" inputmode="decimal" maxlength="64" value="{{item.get(key,'')}}" required></label>{% endfor %}
 </div><label>Inspection findings<textarea name="inspection_findings_{{index}}" maxlength="1000" required>{{item.get('inspection_findings','')}}</textarea></label>
 <label>Inventory classification (required only for accepted stock)<select name="inventory_category_{{index}}"><option value="">Not selected</option>{% for category in ['Equipment','Consumable'] %}<option value="{{category}}" {{'selected' if item.get('_Inventory Category')==category}}>{{category}}</option>{% endfor %}</select></label>
+<label>Accounting classification for accepted equipment<select name="property_class_{{index}}">
+  <option value="">Select after confirming the classification</option>
+  <option value="Semi-expendable">Semi-expendable property for ICS</option>
+  <option value="PPE">Property, plant and equipment for PAR</option>
+</select></label>
+<label>Acquisition date for PPE<input type="date" name="acquisition_date_{{index}}"></label>
 </fieldset>{% endfor %}</fieldset>
 {%- endmacro %}
 {% macro receiving_summary(items) -%}

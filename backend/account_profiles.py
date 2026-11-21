@@ -74,7 +74,7 @@ def connection(api,write=False):
             # User then session lock order matches password/session updates;
             # do not upgrade a preceding shared user lock.
             actor=con.execute('select id,role,status from users where id=? for update',(uid,)).fetchone()
-            token=con.execute('select user_id from auth_sessions where user_id=? and token_hash=? and revoked_at is null and expires_at>clock_timestamp() for share',(uid,digest)).fetchone()
+            token=sessions.locked_actor(con,uid,digest)
             if not actor or actor['status']!='Active' or actor['role'] not in ('Admin','Staff','Inspector') or not token:abort(403)
         con.execute("select set_config('psms.workbook_actor',?,true)",(json.dumps(dict(uid=uid,sid=digest)),))
         yield con,uid

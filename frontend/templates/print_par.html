@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} {{ row.no }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<main class="print-page">
+  <header class="print-head">
+    <p>Municipality of Asuncion, Davao del Norte</p>
+    <h1>Property Acknowledgement Receipt</h1>
+    <p>PAR No. {{ row.no }} · Issued {{ item.issued_at }}</p>
+  </header>
+  <table class="print-table">
+    <thead><tr><th>Quantity</th><th>Unit</th><th>Description</th><th>Property number</th><th>Date acquired</th><th>Unit value (PHP)</th><th>Amount (PHP)</th></tr></thead>
+    <tbody>
+      <tr><td>{{ item.qty }}</td><td>{{ item.unit }}</td><td>{{ item.item }} {{ item.description }}</td>
+        <td>{{ item.property_no }}</td><td>{{ item.acquisition_date }}</td>
+        <td>{{ '%.2f'|format(item.unit_cost) }}</td><td>{{ '%.2f'|format(item.unit_cost * item.qty) }}</td></tr>
+    </tbody>
+  </table>
+  <p>Stock code {{ item.item_code }} · PO {{ item.source_po }} · IAR {{ item.source_iar }}</p>
+  <table class="print-table">
+    <thead><tr><th>Received by</th><th>Issued by</th></tr></thead>
+    <tbody><tr>
+      <td><p>Signature __________________________</p><p>{{ item.recipient_name }}<br>{{ item.recipient_position }}<br>{{ item.recipient_office }}</p><p>Acknowledged {{ item.received_at }}</p></td>
+      <td><p>Signature __________________________</p><p>{{ item.issued_by }}<br>{{ item.issuer_position }}<br>{{ item.issuer_office }}</p><p>Approved {{ item.issued_at }}</p></td>
+    </tr></tbody>
+  </table>
+</main>
+</body>
+</html>

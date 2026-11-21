@@ -164,7 +164,7 @@ def _configure_tesseract() -> str | None:
     return None
 
 
-def _preprocess_variants(image: Image.Image, warnings: List[str] | None = None) -> List[Image.Image]:
+def _preprocess_variants(image: Image.Image, warnings: List[str] | None = None):
     """Return conservative OCR variants without destroying punctuation or layout."""
     img = ImageOps.exif_transpose(image).convert("L")
     # Page width alone misses tiny print surrounded by wide blank margins.
@@ -179,8 +179,19 @@ def _preprocess_variants(image: Image.Image, warnings: List[str] | None = None) 
             if height >= 5:
                 heights.append(height)
             height = 0
+    del ink
     heights.sort()
     small_text = len(heights) >= 4 and heights[len(heights) // 2] < 18
+    render_budget = os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'
+    page_width = img.width
+    if render_budget and not small_text:
+        # Trim only pure-white outer margins. Preserve the original type scale,
+        # interior whitespace and every nonwhite source pixel.
+        bounds = ImageOps.invert(img).getbbox()
+        if bounds:
+            left, top, right, bottom = bounds
+            img = img.crop((max(0, left - 24), max(0, top - 24),
+                            min(img.width, right + 24), min(img.height, bottom + 24)))
     if small_text:
         # Crop only white margins; retain original grayscale pixels and padding.
         bounds = ImageOps.invert(img).getbbox()
@@ -198,23 +209,26 @@ def _preprocess_variants(image: Image.Image, warnings: List[str] | None = None) 
                 warnings.append(warning)
     # Tesseract performs much better around 300 DPI / 2500+ px document width.
     target_width = 2600
-    if not small_text and img.width < target_width:
-        scale = target_width / max(img.width, 1)
+    if not small_text and page_width < target_width:
+        scale = target_width / max(page_width, 1)
+        scale = min(scale, (16_000_000 / (img.width * img.height)) ** 0.5)
         img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
     base = ImageOps.autocontrast(img)
+    del img
+    yield base
     sharpened = base.filter(ImageFilter.UnsharpMask(radius=1.2, percent=145, threshold=3))
+    del base
+    yield sharpened
     # Hard thresholding amplified confidence while merging tiny word gaps in the
     # PNG fixture. Keep antialiased grayscale for enlarged low-resolution print.
-    if small_text:
-        return [base, sharpened]
     # A light threshold variant helps low-contrast scans, but keep grayscale too so
     # thin punctuation/decimal points are not destroyed.
-    threshold = sharpened.point(lambda px: 255 if px > 178 else 0)
-    return [base, sharpened, threshold]
+    if not small_text:
+        yield sharpened.point(lambda px: 255 if px > 178 else 0)
 
 
 _DOCUMENT_DEADLINE = ContextVar('document_deadline', default=None)
-_DOCUMENT_SLOTS = BoundedSemaphore(2)
+_DOCUMENT_SLOTS = BoundedSemaphore(1 if os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1' else 2)
 
 
 def _processing_time_left():
@@ -226,8 +240,9 @@ def _processing_time_left():
 
 def _ocr_candidate(image: Image.Image, psm: int) -> Tuple[str, float]:
     config = f"--oem 3 --psm {psm} -c preserve_interword_spaces=1"
+    budget = 24 if os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1' else 10
     data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT,
-                                    timeout=min(10, _processing_time_left()))
+                                    timeout=min(budget, _processing_time_left()))
     words = []
     confidences = []
     line_map: "OrderedDict[Tuple[int,int,int,int], List[Tuple[int,str]]]" = OrderedDict()
@@ -273,14 +288,20 @@ def _ocr_image(image: Image.Image, warnings: List[str] | None = None) -> str:
         ) from exc
 
     candidates: List[Tuple[str, float]] = []
+    render_budget = os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'
+    deadline = _DOCUMENT_DEADLINE.get()
     # PSM 6: uniform block; PSM 4: columns; PSM 11: sparse labels/forms.
     for variant in _preprocess_variants(image, warnings=warnings):
         for psm in (6, 4, 11):
+            if render_budget and candidates and deadline is not None and monotonic() >= deadline:
+                return max(candidates, key=lambda result: result[1])[0]
             _processing_time_left()
             try:
                 text, score = _ocr_candidate(variant, psm)
                 if text:
                     candidates.append((text, score))
+                    if render_budget and score >= 90 and len(text.split()) >= 12:
+                        return text
             except Exception:
                 continue
     if not candidates:
