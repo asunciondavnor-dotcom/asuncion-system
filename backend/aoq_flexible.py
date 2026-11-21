@@ -310,13 +310,6 @@ def _ocr_image(image: Image.Image, warnings: List[str] | None = None) -> str:
     return candidates[0][0]
 
 
-def _ocr_rgb_frame(image):
-    image.load()
-    if image.getexif().get(274) in (2, 3, 4, 5, 6, 7, 8):
-        image = ImageOps.exif_transpose(image)
-    return image if image.mode == 'RGB' else image.convert('RGB')
-
-
 def _read_scanned_page(image, source, page_number):
     """Retain physical table cells; unsupported scans remain editable evidence."""
     from aoq_ocr_tables_v0_2_0 import extract_ruled_table
@@ -328,10 +321,10 @@ def _read_scanned_page(image, source, page_number):
     # Capture a single full-page pass, including text outside physical grids.
     # Keep word positions for borderless tables instead of flattening row values.
     from procurement_document_layout import positioned_table, ordered_word_text, positioned_shared_fields
-    frame = _ocr_rgb_frame(image)
+    from PIL import ImageOps
+    frame = ImageOps.exif_transpose(image).convert('RGB')
     rotation = document.get('orientation_degrees') or 0
-    if rotation:
-        frame = frame.rotate(rotation, expand=True)
+    frame = frame.rotate(rotation, expand=True)
     _configure_tesseract()
     # Ruled extraction already establishes orientation from physical headers.
     # Borderless pages need a separate bounded orientation/deskew check.
@@ -596,7 +589,7 @@ def _read_image(filepath: str) -> Dict[str, Any]:
             if page_no > 30:
                 warnings.append("Only the first 30 image pages/frames were processed.")
                 break
-            detected = _read_scanned_page(frame, f'Image frame {page_no}, scanned table', page_no)
+            detected = _read_scanned_page(frame.copy(), f'Image frame {page_no}, scanned table', page_no)
             text = detected['raw_text']
             tables.extend(detected['tables'])
             ocr_cells.extend(detected['ocr_cells'])

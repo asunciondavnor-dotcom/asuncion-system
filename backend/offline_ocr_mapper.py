@@ -6,12 +6,9 @@ The destination PPMP schema is fixed; source wording/layout is not.
 """
 from __future__ import annotations
 
-import json
 import math
 import os
 import re
-import subprocess
-import sys
 from threading import RLock
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -197,44 +194,7 @@ def _load_local_model():
         return None
 
 
-def _render_worker_enabled():
-    return __name__ != '__main__' and os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'
-
-
-def _render_worker(operation, payload=None):
-    from aoq_flexible import _DOCUMENT_SLOTS
-    if not _DOCUMENT_SLOTS.acquire(timeout=1):
-        raise RuntimeError('Document processing is busy; retry shortly.')
-    try:
-        # The worker loads the same pinned semantic assets and exits before the
-        # next raster extraction. It does not need application credentials.
-        environment = {key: os.environ[key] for key in (
-            'PSMS_ENV', 'PSMS_NLP_RUNTIME', 'PSMS_INFERENCE_ENABLED', 'PSMS_INFERENCE_RELEASE_ID',
-            'PSMS_INFERENCE_CACHE_ENABLED', 'OCR_SEMANTIC_MODEL_PATH', 'HF_HUB_OFFLINE',
-            'HF_DATASETS_OFFLINE', 'HF_HUB_DISABLE_TELEMETRY', 'TRANSFORMERS_OFFLINE',
-            'OMP_NUM_THREADS', 'OMP_THREAD_LIMIT', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
-            'TOKENIZERS_PARALLELISM', 'PATH', 'HOME', 'LANG', 'SYSTEMROOT', 'TEMP', 'TMP',
-        ) if key in os.environ}
-        result = subprocess.run([sys.executable, '-B', str(Path(__file__).resolve()), operation],
-                                input=json.dumps(payload, default=str), encoding='utf-8',
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment,
-                                timeout=75, check=True)
-        return json.loads(result.stdout)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError('Document processing time limit exceeded; review a smaller document.') from None
-    except (OSError, subprocess.CalledProcessError, ValueError):
-        raise RuntimeError('Semantic document processing is temporarily unavailable.') from None
-    finally:
-        _DOCUMENT_SLOTS.release()
-
-
 def model_status() -> Dict[str, Any]:
-    if _render_worker_enabled():
-        try:
-            return _render_worker('status')
-        except RuntimeError:
-            return {'active': False, 'message': 'Semantic document processing is temporarily unavailable.',
-                    'diagnostic_code': 'SEMANTIC_WORKER_UNAVAILABLE'}
     model = load_local_model()
     return {
         "active": bool(model),
@@ -243,15 +203,6 @@ def model_status() -> Dict[str, Any]:
         "rapidfuzz": bool(fuzzy_ratio),
         "diagnostic_code": 'READY' if model is not None else _MODEL_ERROR_CODE,
     }
-
-
-def encode_names(names):
-    if _render_worker_enabled():
-        import numpy as np
-        vectors = _render_worker('encode', names)
-        return None if vectors is None else np.asarray(vectors, dtype=np.float32)
-    encoder = load_local_model()
-    return None if encoder is None else encoder.encode(names, normalize_embeddings=True)
 
 
 def _semantic_scores(label: str) -> Dict[str, float]:
@@ -928,8 +879,6 @@ def map_document(document: Dict[str, Any]) -> Dict[str, Any]:
     Recursive multi-item mapping shares the request-local dictionary. No source
     text or embeddings survive this call or cross another user's request.
     """
-    if _render_worker_enabled():
-        return _render_worker('map', document)
     if _DOCUMENT_SEMANTIC_SCORES.get() is not None:
         return _map_document(document)
     token = _DOCUMENT_SEMANTIC_SCORES.set({})
@@ -1264,17 +1213,3 @@ def validate_record(fields: Dict[str, Any]) -> List[str]:
     if budget and not re.search(r"\d", budget):
         errors.append("Estimated Budget must contain a numeric amount.")
     return errors
-
-
-if __name__ == '__main__':
-    payload = json.load(sys.stdin)
-    if sys.argv[1:] == ['map']:
-        output = map_document(payload)
-    elif sys.argv[1:] == ['status']:
-        output = model_status()
-    elif sys.argv[1:] == ['encode']:
-        embeddings = encode_names(payload)
-        output = None if embeddings is None else embeddings.tolist()
-    else:
-        raise SystemExit(2)
-    json.dump(output, sys.stdout, default=str)

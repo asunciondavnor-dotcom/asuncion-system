@@ -23,9 +23,10 @@ def suggest_candidates(pr_items, po_items):
     if not left or not right: return []
     if len(left)+len(right)>80: return []  # Bound synchronous encoder work.
     with _ENCODER_LOCK:
-        from offline_ocr_mapper import encode_names
-        vectors = encode_names([r['name'][:500] for r in left+right])
-        if vectors is None: return []
+        from offline_ocr_mapper import load_local_model
+        encoder = load_local_model()
+        if encoder is None: return []
+        vectors = encoder.encode([r['name'][:500] for r in left+right], normalize_embeddings=True)
     result = []
     for i, request in enumerate(left):
         ranked = []
