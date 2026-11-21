@@ -1,9 +1,14 @@
 {
   "version": 2,
+  "framework": null,
+  "outputDirectory": "public",
+  "git": {
+    "deploymentEnabled": false
+  },
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "https://REPLACE-WITH-RENDER-URL.onrender.com/$1"
+      "destination": "https://asuncion-backend.onrender.com/$1"
     }
   ]
 }

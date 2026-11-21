@@ -1,0 +1,6 @@
+backend/
+deploy/
+.agents/
+.aws/
+.codex/
+tests/
