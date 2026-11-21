@@ -10,10 +10,10 @@ import math
 import re
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw
 import pytesseract
 
-from aoq_flexible import _configure_tesseract, _map_header, _table_text
+from aoq_flexible import _configure_tesseract, _map_header, _ocr_rgb_frame, _table_text
 from aoq_ocr_tables_v0_1_0 import _centres, cells_from_words
 
 VERSION = '0.2.0'
@@ -76,10 +76,15 @@ def _physical_grid(image):
     gray = np.asarray(image.convert('L'))
     ink = gray < 235
     length = max(35,min(160,image.height//10))
-    vertical = maximum_filter1d(minimum_filter1d(ink,size=length,axis=0,mode='constant'),
-                                size=length,axis=0,mode='constant')
-    thin = vertical & ink & ~minimum_filter1d(ink,size=9,axis=1,mode='constant')
+    thin = minimum_filter1d(ink, size=length, axis=0, mode='constant')
+    vertical = maximum_filter1d(thin, size=length, axis=0, mode='constant')
+    minimum_filter1d(ink, size=9, axis=1, mode='constant', output=thin)
+    np.logical_not(thin, out=thin)
+    np.logical_and(thin, ink, out=thin)
+    np.logical_and(thin, vertical, out=thin)
+    del ink
     labelled,_ = label(thin)
+    del thin
     lines=[]
     for region in find_objects(labelled):
         if region is None:continue
@@ -358,7 +363,7 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
     if image.width * image.height > 16_000_000:
         result['warnings'] = ['Image exceeds candidate pixel bound; manual review required.']
         return result
-    original = ImageOps.exif_transpose(image).convert('RGB')
+    original = _ocr_rgb_frame(image)
     _configure_tesseract()
     selected = None
     def bounded_ocr(frame):
@@ -366,7 +371,7 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
         return _ocr(frame, remaining)
     try:
         for rotation in (0, 90, 180, 270):
-            oriented = original.rotate(rotation, expand=True)
+            oriented = original.rotate(rotation, expand=True) if rotation else original
             grid = detect_grid(oriented)
             if grid is None:
                 continue
@@ -393,11 +398,13 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
             if _header_score(header_rows) >= 5 or _ppmp_header_valid(header_rows):
                 selected = rotation, cleaned, xs, ys
                 break
+            del cleaned, top
         if selected is None:
             result['warnings'] = ['No source-backed grid/header orientation; no quotation values were inferred.']
             return result
         rotation, cleaned, xs, ys = selected
         rows, evidence, warnings = _safe_cells(bounded_ocr(cleaned), xs, ys, min_confidence)
+        del selected, cleaned, top
         # The independently captured header may contain a cell missed again by
         # the full-page pass. Retain that actual header text and its confidence.
         for col,value in enumerate(header_rows[0]):
@@ -410,7 +417,7 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
         return result
     for cell in evidence:
         cell.update(page=page, source=source, coordinate_space=result['coordinate_space'])
-    spans = _merged_headers(original.rotate(rotation, expand=True), xs, ys, rows)
+    spans = _merged_headers(oriented, xs, ys, rows)
     if _ppmp_header_valid(rows):
         # Planning estimates are not supplier quotations or award evidence.
         quotations,checks,diagnostics=[],[],[]
