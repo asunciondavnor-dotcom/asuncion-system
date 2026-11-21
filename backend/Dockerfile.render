@@ -7,8 +7,10 @@ FROM ${APPROVED_MODEL_IMAGE} AS approved_models
 
 FROM python:3.13.16-slim-bookworm AS source
 WORKDIR /source
-# Dockerfile.render.dockerignore permits only the exact reviewed source inputs.
-COPY . /source/
+# Build from the repository root. The manifest validates the staged runtime paths.
+COPY backend/ /source/
+COPY frontend/templates/ /source/templates/
+COPY frontend/static/ /source/static/
 RUN python -B deploy/render_delivery.py /runtime
 
 FROM python:3.13.16-slim-bookworm AS runtime

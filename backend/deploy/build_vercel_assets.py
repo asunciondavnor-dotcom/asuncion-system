@@ -77,12 +77,15 @@ def _contained_path(root, relative):
 
 def build_assets(project_root, *, check=False, refresh_generated=False):
     root = Path(project_root).resolve(strict=True)
+    source_root, source_prefix = root, 'static'
+    if root.name == 'backend' and (root.parent / 'frontend' / 'static').is_dir():
+        source_root, source_prefix = root.parent, 'frontend/static'
     expected = {'static/' + name for name in ASSETS}
     public = _contained_path(root, 'public')
     inputs = []
     conflicts = []
     for name in ASSETS:
-        source = _contained_path(root, 'static/' + name)
+        source = _contained_path(source_root, source_prefix + '/' + name)
         target = _contained_path(root, 'public/static/' + name)
         if not source.is_file():
             raise RuntimeError('A reviewed UI asset is missing.')

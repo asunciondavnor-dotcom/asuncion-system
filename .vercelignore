@@ -1,4 +1,6 @@
 backend/
+frontend/templates/
+frontend/static/
 deploy/
 .agents/
 .aws/

@@ -41,6 +41,12 @@ from offline_ocr_mapper import (
 )
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+REPOSITORY_FRONTEND = os.path.abspath(os.path.join(BASE_DIR, '..', 'frontend'))
+FRONTEND_DIR = (
+    REPOSITORY_FRONTEND
+    if os.path.isdir(os.path.join(REPOSITORY_FRONTEND, 'templates'))
+    else BASE_DIR
+)
 DATABASE_URL = database_url()
 DATA_DIR = os.path.abspath(os.environ.get('PSMS_DATA_DIR', os.path.join(BASE_DIR, 'data')))
 EXCEL_PATH = os.path.join(DATA_DIR, 'PPMP_Data.xlsx')
@@ -51,7 +57,12 @@ AOQ_UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads', 'aoq')
 PPMP_OCR_STAGE_DIR = os.path.join(BASE_DIR, 'temp', 'ppmp_ocr')
 ALLOWED_OCR_EXTENSIONS = set(FLEXIBLE_AOQ_EXTENSIONS)
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=os.path.join(FRONTEND_DIR, 'templates'),
+    static_folder=os.path.join(FRONTEND_DIR, 'static'),
+    static_url_path='/static',
+)
 
 configure_runtime(app)
 from nlp_runtime_selection import configure as configure_nlp_runtime
@@ -2315,7 +2326,7 @@ def dashboard():
                            revised_workflow_active=revised_active,
                            workflow_unavailable=workflow_unavailable,
                            municipal_banner_available=os.path.isfile(os.path.join(
-                               BASE_DIR, 'static', 'images', 'asuncion_municipal.jpg')))
+                               app.static_folder, 'images', 'asuncion_municipal.jpg')))
 
 @app.route('/excel-status')
 def excel_status():
