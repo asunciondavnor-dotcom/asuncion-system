@@ -32,6 +32,95 @@ WORKBOOK_ALIASES = {
 }
 
 
+def review_item(text, evidence):
+    return dict(fields={'Item Name':text,
+                        'General Description and Objective of the Project to be Procured':text},
+                field_confidence={'_source_evidence':dict(evidence,text=text)})
+
+
+def inventory_reference_items(document):
+    """Recover positioned inventory reference lines without importing balances."""
+    from procurement_document_layout import ordered_word_text
+    items=[]
+    for page in document.get('page_evidence',[]):
+        words=page.get('words',[])
+        for anchor in words:
+            if anchor['text'].casefold()!='on-hand':
+                continue
+            band=[w for w in words if abs(w['top']-anchor['top'])<=anchor['height']*1.5]
+            by_name={w['text'].casefold():w for w in band}
+            if not {'item','description','qty','value','excel'}<=by_name.keys():
+                continue
+            unit=[w['left'] for w in band if w['text'].casefold()=='unit']
+            if len(unit)!=2:continue
+            left=by_name['item']['left']-3
+            unit_x,price_x=sorted(unit)
+            row_x=by_name['excel']['left']-3
+            if not left<unit_x<anchor['left']<price_x<row_x:continue
+            for number in sorted((w for w in words if w['left']>=row_x and w['top']>anchor['top']
+                                  and w['text'].isdigit()),key=lambda w:w['top']):
+                row=[w for w in words if abs(w['top']-number['top'])<number['height']*.7]
+                groups=[[w for w in row if start-3<=w['left']<end-3] for start,end in
+                        [(left,unit_x),(unit_x,anchor['left']),(anchor['left'],price_x),(price_x,row_x)]]
+                name,unit_text,quantity,value=[ordered_word_text(group).strip() for group in groups]
+                if name and unit_text and re.fullmatch(r'[\d,.]+',quantity) and re.fullmatch(r'(?:PHP\s*)?[\d,.]+',value):
+                    evidence=dict(page=page.get('page'),row=len(items)+1,source='Inventory reference',
+                                  reference_row=number['text'],on_hand=quantity,historical_value=value,source_unit=unit_text)
+                    item=review_item(name,evidence)
+                    item['fields']['Unit']=unit_text
+                    items.append(item)
+            break
+    return items
+
+
+def photographed_ppmp_items(path, deadline=None):
+    """Second pass on the item column of a photographed, numbered PPMP form."""
+    from PIL import Image, ImageOps
+    import numpy as np
+    from scipy import ndimage
+    import pytesseract
+    from aoq_flexible import _configure_tesseract
+    from offline_ocr_mapper import raster_memory_scope
+    def timeout(seconds):
+        remaining=seconds if deadline is None else min(seconds,deadline-time.perf_counter())
+        if remaining<=0:raise TimeoutError('Item recovery reached the processing deadline.')
+        return remaining
+    with Image.open(path) as original:
+        if original.width<=original.height or original.width*original.height>4_000_000 or getattr(original,'n_frames',1)!=1:return []
+        _configure_tesseract()
+        with raster_memory_scope(original.width*original.height):
+            image=ImageOps.exif_transpose(original).convert('L')
+            data=pytesseract.image_to_data(image.crop((0,0,image.width,int(image.height*.49))),
+                        config='--oem 3 --psm 11',output_type=pytesseract.Output.DICT,timeout=timeout(18))
+            if not re.search(r'project\s+procurement',' '.join(data['text']),re.I):return []
+            anchors={}
+            for index, value in enumerate(data['text'][:-1]):
+                col=data['text'][index+1]
+                if value.casefold()=='column' and col in ('2','3','4') and abs(data['top'][index]-data['top'][index+1])<max(5,data['height'][index]):
+                    anchors[col]=(data['left'][index],data['top'][index]+data['height'][index],data['height'][index])
+            if not {'2','3','4'}<=anchors.keys():return []
+            a,b,c=[anchors[key] for key in ('2','3','4')]
+            if not a[0]<b[0]<c[0] or max(v[1] for v in anchors.values())-min(v[1] for v in anchors.values())>3*b[2]:return []
+            left=max(0,round(b[0]-(b[0]-a[0])*.52))
+            right=round(b[0]+(c[0]-b[0])*.76)
+            top=b[1]+max(1,b[2]//4)
+            bottom=min(image.height,top+round(image.height*.36))
+            pixels=np.array(ImageOps.autocontrast(image.crop((left,top,right,bottom))))
+            if pixels.size==0:return []
+            mask=pixels<np.percentile(pixels,30)
+            pixels[ndimage.binary_opening(mask,structure=np.ones((1,19))) |
+                   ndimage.binary_opening(mask,structure=np.ones((25,1)))]=255
+            crop=ImageOps.expand(Image.fromarray(pixels).resize((pixels.shape[1]*2,pixels.shape[0]*2)),15,'white')
+            lines=pytesseract.image_to_string(crop,config='--oem 3 --psm 6',timeout=timeout(15)).splitlines()
+    candidates=[]
+    for line in lines:
+        line=line.strip(' |[]_~\t')
+        if re.fullmatch(r'.*\b(?:btls?|btis|bils|bls|pcs?|pes|rolls?|sets?|lengths?)\b.*',line,re.I) or re.match(r'^\d+\s*(?:seis|sets)\b',line,re.I):
+            candidates.append(review_item(line,dict(source='Photographed PPMP item column',page=1,row=len(candidates)+1,
+                                                    bbox=[left,top,right,bottom])))
+    return candidates
+
+
 def workbook_items(document):
     """Read explicit item columns, retaining the original worksheet and row."""
     items = []
@@ -151,7 +240,7 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
     def destination(sid):
         return url_for('ppmp_type',ptype=return_category,ocr_source=str(sid)) if return_category else url_for('ppmp_intake_review',sid=str(sid))
     if len(rows)>200:abort(400,description='Review at most 200 items per upload.')
-    if ext not in WORKBOOKS and not (structured.get('model') or {}).get('active'):
+    if ext not in WORKBOOKS and not structured.get('direct_recovery') and not (structured.get('model') or {}).get('active'):
         abort(503,description='The semantic mapper is unavailable. No extraction was saved.')
     digest=hashlib.sha256(content).hexdigest()
     if source_id is None:
@@ -267,13 +356,31 @@ def capture_upload(api,name,ext,content):
 
 def extract_saved(api,sid,run_id,name,ext,content):
     try:
+        deadline=time.perf_counter()+100
         with extraction_path(content,ext) as path:
             g.document_stage='extraction';started=time.perf_counter()
+            recovered=[]
+            if ext in {'.jpg','.jpeg','.png'}:
+                try:recovered=photographed_ppmp_items(path,deadline)
+                except (RuntimeError,TimeoutError):pass
+            if recovered:
+                extracted=dict(raw_text='\n'.join(item['fields']['Item Name'] for item in recovered),
+                               extraction_method='OCR of numbered PPMP item column')
+                structured=dict(rows=recovered,direct_recovery=True,warnings=[
+                    'Compare this OCR text with the original and verify each item, quantity and budget before approval.'])
+                return save_extraction(api,name,ext,content,extracted,structured,source_id=sid,run_id=run_id,
+                    timings=dict(extraction_seconds=time.perf_counter()-started,mapping_seconds=0))
             extracted=api['extract_aoq_document'](path);native_seconds=time.perf_counter()-started
             g.document_stage='mapping';started=time.perf_counter()
             native=workbook_items(extracted) if ext in WORKBOOKS else None
             structured=(dict(rows=native,warnings=extracted.get('warnings',[]),parser='explicit-excel-columns')
                         if native is not None else api['map_ppmp_ocr_document'](extracted))
+            if not structured.get('rows') and (structured.get('model') or {}).get('active'):
+                rows = inventory_reference_items(extracted) if ext=='.pdf' else []
+                if rows:
+                    structured['rows']=rows
+                    structured.setdefault('warnings',[]).append(
+                        'Compare these recovered rows with the original. Enter verified procurement quantities and budgets before approval.')
             mapping_seconds=time.perf_counter()-started
         return save_extraction(api,name,ext,content,extracted,structured,source_id=sid,run_id=run_id,
                                timings=dict(extraction_seconds=native_seconds,mapping_seconds=mapping_seconds))
@@ -425,11 +532,9 @@ def review(api,sid):
         values={key:request.args[key] for key in request.args if key in ('q','sort','category','page','sheet') or key.startswith('h_')}
         values.update(changes)
         return url_for('ppmp_intake_review',sid=sid,**values)
-    import document_history
     return render_template('ppmp_intake.html',active='ppmp',title='PPMP Document Review',source=source,
         items=items,labels=api['ppmp_review_labels'](),categories=CATEGORIES,page=page,has_next=has_next,
-        summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url,
-        history=document_history.listing(api,'ppmp'))
+        summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url)
 
 
 def source_file(api,sid):

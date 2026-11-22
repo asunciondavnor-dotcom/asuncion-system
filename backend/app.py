@@ -2149,9 +2149,13 @@ def ppmp_intake():
         and case when d.confidence_json IS JSON OBJECT then
             d.confidence_json::jsonb->'_intake_verified' is not null and d.confidence_json::jsonb->'_item_approval' is null else false end
         order by s.filename,s.id limit 100""") if is_admin() else []
-    return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',pending=pending,
+    latest = q("""select s.id,s.filename from psms_documents.sources s where s.kind='ppmp' and s.owner_id=?
+        and (not exists(select 1 from ppmp_ocr_drafts d where d.source_id=s.id)
+            or exists(select 1 from ppmp_ocr_drafts d where d.source_id=s.id and d.status in ('NEEDS_REVIEW','CATEGORY_REVIEW','REVIEWED') and not d.converted))
+        order by s.created_at desc limit 8""",(durable_ocr._uid(),))
+    return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',pending=pending,latest=latest,
                            source=None,items=[],labels=ppmp_review_labels(),categories=item_intake.CATEGORIES,
-                           history=document_history.listing(globals(),'ppmp'))
+                           )
 
 
 @app.get('/items/sample.xlsx')
