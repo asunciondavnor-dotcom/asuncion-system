@@ -1980,10 +1980,12 @@ def trained_nlp_model_status():
     if not app.config.get('PSMS_INFERENCE_ENABLED',True):
         return {'active':False,'message':'OCR/NLP inference is disabled pending an approved release.',
                 'diagnostic_code':'INFERENCE_DISABLED'}
-    if (render_model_preparation.enabled(app.config)
-            and render_model_preparation.state('rf', app.config) != 'ready'):
-        return {'active': False, 'can_prepare': True,
-                'message': 'The approved verification model prepares before use.'}
+    if render_model_preparation.enabled(app.config):
+        ready = render_model_preparation.state('rf', app.config) == 'ready'
+        return {'active': ready, 'can_prepare': True,
+                'message': ('Approved verification model ready.' if ready
+                            else 'The approved verification model prepares before use.'),
+                'manifest': {'deployed_model': 'FastText + Random Forest', 'runtime': 'retrained_rf'}}
     try:
         from nlp_runtime_selection import runtime, model_root
         return runtime(app.config).model_status(model_root(app.config, NLP_FASTTEXT_DIR))
@@ -4396,9 +4398,11 @@ def audit():
 @app.route('/health')
 def health():
     model_state = trained_nlp_model_status()
-    if (render_model_preparation.enabled(app.config)
-            and render_model_preparation.state('semantic', app.config) != 'ready'):
-        mapper_state = {'active': False, 'message': 'The approved semantic model prepares before use.'}
+    if render_model_preparation.enabled(app.config):
+        ready = render_model_preparation.state('semantic', app.config) == 'ready'
+        mapper_state = {'active': ready,
+                        'message': ('Local semantic mapper active.' if ready
+                                    else 'The approved semantic model prepares before use.')}
     else:
         mapper_state = ocr_mapper_model_status()
     database_ok = bool(db_ping())

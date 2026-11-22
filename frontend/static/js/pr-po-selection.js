@@ -14,13 +14,15 @@
     for (const choice of pr.options) choice.disabled = Boolean(choice.value && expected && choice.value !== expected);
     if (selectLinked && expected) pr.value = expected;
     const pairReady = Boolean(pr.value && po.value && (!expected || pr.value === expected));
-    const existing = option?.dataset.hasVerification === 'yes';
-    button.textContent = existing ? 'Open Saved Verification' : 'Run Verification';
-    button.disabled = !pairReady || (!existing && (form.dataset.inferenceActive !== 'yes' || form.dataset.saveReady !== 'yes'));
+    const existing = Boolean(option?.dataset.savedPrId);
+    const hasHistory = option?.dataset.hasVerification === 'yes';
+    button.textContent = existing ? 'Open Saved Verification' : hasHistory ? 'Check Verification' : 'Run Verification';
+    button.disabled = !pairReady || (!hasHistory && (form.dataset.inferenceActive !== 'yes' || form.dataset.saveReady !== 'yes'));
     notice.textContent = expected && pr.value !== expected
       ? 'The corresponding PR is not available in the approved list. Open the saved record or review its source status.'
       : !po.value ? 'Choose an approved PO. Its recorded PR is selected automatically when available.'
       : existing ? 'This PO already has verification history. Open its saved result to continue review; this does not rerun the model or change approval.'
+      : hasHistory ? 'This PO has a legacy verification. The server checks whether it can reopen the record or requires a new verification.'
       : expected ? 'The recorded PR is selected for this PO. Check both source documents before running verification.'
       : 'This PO has no recorded PR association. Choose the corresponding approved PR; the server will check its authority.';
   };

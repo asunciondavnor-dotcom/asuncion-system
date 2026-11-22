@@ -54,7 +54,7 @@
   function prepareAhead(form) {
     if (form.dataset.modelPreparationAction) {
       const order = selectedOrder(form);
-      if (!order?.value || order.dataset.hasVerification === 'yes') return;
+      if (!order?.value || order.dataset.savedPrId) return;
     }
     const url = endpoint(form);
     if (requested.has(url)) return;
@@ -72,7 +72,7 @@
     if (form) {
       const ticket = waiting.get(form);
       if (ticket) ticket.changed = true;
-      prepareAhead(form);
+      else prepareAhead(form);
     }
   });
 
@@ -80,7 +80,7 @@
     const form = event.target, button = event.submitter;
     if (!form.matches?.(selector) || replaying.has(form) || event.defaultPrevented) return;
     if (form.dataset.modelPreparationAction && button?.value !== form.dataset.modelPreparationAction) return;
-    if (form.dataset.modelPreparationAction && selectedOrder(form)?.dataset.hasVerification === 'yes') return;
+    if (form.dataset.modelPreparationAction && selectedOrder(form)?.dataset.savedPrId) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (waiting.has(form)) return;
