@@ -941,11 +941,12 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
                 check_percentage='0.00-100.00%'
             findings.append(dict(detail=str(check.get('attribute') or 'Item correspondence').replace('source specification field ',''),
                 requested=check.get('requested'),offered=check.get('offered'),
+                review_pr=check.get('state')!='MISSING_SPECIFICATION',review_po=True,
                 status='Needs Review' if check_value is None else 'Mismatch' if check_value else 'Match',
                 percentage=check_percentage,percentage_basis='Binary saved-check indicator: 100% confirmed violation, 0% passed; a range is pending review, not quantity deviation.'))
         if not checks:
             legacy_states.append(None)
-            findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated'))
+            findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated',review_po=True))
     mismatch=any(s=='MISMATCH' for s in legacy_states)
     clean=((current_comparison is not None or row.get('technical_status')=='MATCH') and saved.get('technical_status')=='MATCH'
            and bool(legacy_states) and all(s=='MATCH' for s in legacy_states)
@@ -974,7 +975,7 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
         offered=item(po_items,position)
         reference=saved['source_fields']['PO'][position-1]['reference']
         pairs.append(dict(pr={},po=offered,pr_position=None,po_position=position,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
-        findings.append(dict(detail='Extra PO item',requested=None,offered=offered or reference,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.'))
+        findings.append(dict(detail='Extra PO item',requested=None,offered=offered or reference,status='Mismatch',percentage='100.00%',percentage_basis='One conclusively extra PO line counts once.',review_po=True))
     resolved=sum(value is not None for value in incidence['checks'].values())
     check_count=len(incidence['checks'])
     pending_checks=check_count-resolved
