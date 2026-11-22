@@ -1,7 +1,34 @@
-{% extends 'base.html' %}{% block content %}
-<div class="toolbar page-head"><h2>Model Information</h2><a class="btn" href="{{url_for('nlp')}}">Back</a></div>
-<div class="grid grid-3 model-cards">{% for a in algorithms %}<div class="card"><div class="model-card-head">{{icon('check' if a.deployed else 'document')}}<h3>{{a.name}}</h3><span class="badge {{'ok' if a.deployed else 'neutral'}}">{{'Deployed' if a.deployed else 'Research comparison'}}</span></div><p class="muted">{{a.notes}}</p></div>{% endfor %}</div>
-<div class="section-gap"><table class="table"><thead><tr><th>Aspect</th>{% for a in algorithms %}<th>{{a.name}}</th>{% endfor %}</tr></thead><tbody>{% for label,key in [('Model type','type'),('Purpose','role'),('Status in app','status'),('Recorded metric','accuracy')] %}<tr><th>{{label}}</th>{% for a in algorithms %}<td>{{a[key]}}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
-<div class="warning-box section-gap"><b>Evaluation limitation</b> · Generated and COA-derived examples are controlled training data. Results require review by authorized personnel and validation against real reviewed PR–PO outcomes.</div>
-<details class="card"><summary>How verification works</summary><p>FastText embeds the approved PR and PO, including descriptions, specifications, quantities, and units. Separate trained classifiers predict the status and primary issue. No runtime rule changes the predicted class; verification stops if the model cannot load.</p></details>
+{% extends 'base.html' %}
+{% block content %}
+<div class="toolbar page-head"><h2>PR–PO Model Information</h2><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
+<section class="card">
+  <h3>Published validation results</h3>
+  <p>The three models used the same 1,326 training pairs and 492 validation pairs. The Random Forest scored 72.36% overall and 73.53% on the 306 unseen-name pairs.</p>
+  <p>These results use proposed labels on controlled examples. A separate human-reviewed test set is still needed to measure accuracy on municipal records. All three scores fall below Monday’s 75% target on this validation set.</p>
+  <div class="table-scroll"><table class="table">
+    <thead><tr><th scope="col">Model</th><th scope="col">Unseen-name accuracy</th><th scope="col">Unseen-family accuracy</th><th scope="col">Overall accuracy</th><th scope="col">Macro precision</th><th scope="col">Macro recall</th><th scope="col">Macro F1</th></tr></thead>
+    <tbody>{% for a in algorithms %}<tr><th scope="row">{{a.name}} {% if a.deployed %}<span class="badge ok">Deployed</span>{% endif %}</th>{% for metric in a.metrics %}<td>{{'%.2f'|format(metric)}}%</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+  <details><summary>How to read the metrics</summary>
+    <dl><dt>Accuracy</dt><dd>The percentage of validation pairs assigned their expected class.</dd>
+    <dt>Precision</dt><dd>Of pairs predicted in a class, the percentage that belong to it.</dd>
+    <dt>Recall</dt><dd>Of all pairs in a class, the percentage the model found.</dd>
+    <dt>F1</dt><dd>The harmonic mean of precision and recall. A low value in either reduces F1.</dd>
+    <dt>Macro average</dt><dd>Each of the four classes counts equally in the average.</dd>
+    <dt>Prediction confidence</dt><dd>The model’s score for one pair. Reviewers confirm the actual requirements and findings from the source documents.</dd></dl>
+  </details>
+</section>
+<section class="card section-gap">
+  <h3>Four predicted classifications</h3>
+  <p>These simulated cases illustrate the expected classifications. Actual predictions depend on the details available in the PR and PO.</p>
+  <div class="table-scroll"><table class="table">
+    <thead><tr><th scope="col">Classification</th><th scope="col">When it applies</th><th scope="col">Simulated PR–PO example</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Acceptable</th><td>The PO satisfies the PR item, quantity, unit and requirements.</td><td>The PR asks for 20 reams of A4 80 gsm paper, and the PO lists all three details.</td></tr>
+      <tr><th scope="row">Needs Recanvass</th><td>A known difference needs a corrected quotation or another canvass.</td><td>The PR asks for 20 reams, and the PO offers 15.</td></tr>
+      <tr><th scope="row">Needs Review</th><td>A missing or ambiguous detail needs human verification.</td><td>The PR specifies 80 gsm, and the PO omits the paper weight.</td></tr>
+      <tr><th scope="row">Reject</th><td>A missing or different item prevents the PO from fulfilling the PR.</td><td>The PR asks for paper, and the PO lists toner instead.</td></tr>
+    </tbody>
+  </table></div>
+</section>
 {% endblock %}

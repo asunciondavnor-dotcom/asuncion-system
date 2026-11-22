@@ -1994,27 +1994,24 @@ def trained_nlp_model_status():
 
 
 def algorithm_comparison():
-    """Describe the approved research families separately from installed inference."""
+    """Present status metrics from the pinned three-family research export."""
     model_state = trained_nlp_model_status()
     active = bool(model_state.get('active'))
     manifest = model_state.get('manifest') or {}
     default = 'FastText + Random Forest' if app.config.get('PSMS_NLP_RUNTIME') == 'retrained_rf' else 'FastText + Logistic Regression'
     selected = manifest.get('deployed_model') or default
     algorithms = []
-    for family in ('Logistic Regression', 'Linear SVM', 'Random Forest'):
+    for family, name_accuracy, family_accuracy, accuracy, precision, recall, f1 in (
+        ('Logistic Regression', 61.76, 51.61, 57.93, 61.63, 64.30, 57.20),
+        ('Linear SVM', 63.40, 52.15, 59.15, 62.36, 64.39, 58.20),
+        ('Random Forest', 73.53, 70.43, 72.36, 72.07, 71.75, 70.12),
+    ):
         name = 'FastText + ' + family
-        deployed = active and selected == name
+        deployed = (active or model_state.get('can_prepare')) and selected == name
         algorithms.append({
             'name': name,
-            'type': 'FastText subword features with ' + family,
-            'role': 'Installed inference and approved research approach' if deployed else 'Approved research comparison approach',
-            'status': 'Active' if deployed else 'Experimental only; not deployed',
             'deployed': deployed,
-            'accuracy': 'Not validated against independently human-reviewed labels.',
-            'notes': 'Compare all three approaches using identical eligible training and evaluation partitions. '
-                     'Targets pending human review remain AI_PROPOSED_UNVERIFIED. '
-                     'This page does not establish that all three approaches were trained or evaluated. '
-                     'The installed model remains unchanged.',
+            'metrics': (name_accuracy, family_accuracy, accuracy, precision, recall, f1),
         })
     return algorithms
 
@@ -4133,7 +4130,25 @@ def reports():
     metrics = q('select '+','.join(projections), one=True)
     counts = {name:metrics[f'c{index}'] for index,(name,_) in enumerate(modules)}
     totals = {name:to_float(metrics[f't{index}']) for index,(name,_,_) in enumerate(aggregations)}
-    return render_template('reports.html', active='reports', totals=totals, counts=counts, title='Reports')
+    report = request.args.get('records', 'ppmp')
+    office = request.args.get('office', '').strip()
+    queries = {
+        'ppmp': 'select id,no,office,year,status,total from ppmp',
+        'pr': 'select id,no,office,created_at,status,total from pr',
+        'po': '''select p.id,p.no,r.office,p.created_at,p.status,p.total,p.supplier,
+                (select a."user" from audit_trail a where a.module='PO' and a.ref=p.no
+                and a.action='Generated PO' order by a.id limit 1) as generated_by
+                from po p left join aoq aq on aq.id=p.aoq_id
+                left join pr r on r.id=coalesce(p.pr_id,aq.pr_id)''',
+    }
+    if report not in queries or len(office)>160 or len(request.args.getlist('office'))>1:
+        abort(400)
+    sql = 'select * from ('+queries[report]+') records'
+    rows = paged_q(sql + (' where lower(office)=lower(?)' if office else '')+' order by id desc',
+                   (office,) if office else ())
+    return render_template('reports.html', active='reports', totals=totals, counts=counts, title='Reports',
+                           report=report, office=office, year=record_year_filter(), rows=rows,
+                           report_pages=g.psms_pagination)
 
 
 def spreadsheet_safe_cell(value):

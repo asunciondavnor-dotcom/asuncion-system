@@ -18,7 +18,7 @@
     </form>
     {% endif %}
     <div class="actions">
-      <button type="button" class="btn primary" data-item-dialog="upload-item-file" aria-haspopup="dialog">Upload and extract</button>
+      <button type="button" class="btn primary" data-item-dialog="upload-item-file" aria-haspopup="dialog">Upload Document</button>
       <a class="btn" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
     </div>
   </div>
@@ -29,6 +29,7 @@
     <form method="post" action="{{url_for('ppmp_intake')}}" enctype="multipart/form-data" data-document-processing{% if config.get('RENDER_MODEL_PREPARATION') %} data-model-preparation="{{url_for('inference_preparation',kind='semantic')}}"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
       <label>Item document <input type="file" name="ocr_file" accept=".xlsx,.xlsm,.pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.csv,.docx,.txt" required></label>
+      <p class="muted">For official PPMP paperwork, upload a scan of the signed original. For spreadsheets, download the sample to see the supported columns.</p>
       <div class="actions"><button class="btn primary">Upload and extract</button><a class="btn" href="{{url_for('item_upload_sample')}}">Download sample Excel file</a></div>
       <p data-processing-message hidden role="status"></p>
     </form>

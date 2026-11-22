@@ -481,9 +481,9 @@ def print_context(factory, kind, row):
                 join psms_signatories.people p on p.id=a.person_id where p.active and p.effective_from<=current_date
                 and (p.effective_to is null or p.effective_to>=current_date)''').fetchall()
             identities = {v['slot']: {'name': v['full_name'], 'position': v['position']} for v in values}
-            notice = 'Unsigned draft. Configured identities are previews only; no procurement approval or signature is implied.'
+            notice = 'Draft. Printed names identify the designated signatories.'
             captured_at = None
-        sig = {slot: (identities.get(slot, {}).get('name') or 'Not configured — unsigned',
+        sig = {slot: (identities.get(slot, {}).get('name') or '',
                       identities.get(slot, {}).get('position') or '') for slot in slots}
         return {'sig': sig, 'signatory_notice': notice, 'signatory_captured_at': captured_at}
     finally:

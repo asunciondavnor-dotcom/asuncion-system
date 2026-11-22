@@ -17,7 +17,7 @@
 
   <div class="print-page">{% with hide_signatory_timestamp=true %}{% include "signatory_notice.html" %}{% endwith %}
     <img class="print-seal" src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion seal"><h1 class="app-title">ANNUAL PROCUREMENT PLAN (APP)</h1>
-    <p class="agency-line"><b>Name of Agency:</b> Not configured</p>
+    <p class="agency-line"><b>Name of Agency:</b> Municipality of Asuncion</p>
     <p style="text-align:center"><b>Annual Procurement Plan for FY {{row.year}}</b></p>
 
     <p class="print-status"><b>Document:</b> {{row.no}} · <b>Workflow status:</b> {{row.status}} · <b>Source PPMP:</b> {{source_ppmp_no or 'Not recorded'}}</p>
@@ -82,8 +82,8 @@
     <p class="app-budget-note">Unrecorded milestone dates are blank. “—” means MOOE/CO classification is not established; the total remains unchanged.</p>
     <details class="no-print"><summary>Source PPMP timeline (not APP milestone dates)</summary>{% for item in items %}<p>Start: {{item.get('Start of Procurement Activity','')|month_year}} · End: {{item.get('End of Procurement Activity','')|month_year}} · Expected delivery: {{item.get('Expected Delivery/Implementation Period','')|month_year}}</p>{% endfor %}</details>
     <div class="sign-grid">
-      <div class="sign"><p>Prepared by:</p><div class="signatory-name">{{sig.app_prepared[0]}}</div>{{sig.app_prepared[1]}}</div>
-      <div class="sign"><p>Approved:</p><div class="signatory-name">{{sig.app_approved[0]}}</div>{{sig.app_approved[1]}}</div>
+      <div class="sign"><p>Prepared by:</p><div class="esign">{{sig.app_prepared[0]}}</div>{{sig.app_prepared[1]}}</div>
+      <div class="sign"><p>Approved:</p><div class="esign">{{sig.app_approved[0]}}</div>{{sig.app_approved[1]}}</div>
     </div>
   </div>
 </div>
