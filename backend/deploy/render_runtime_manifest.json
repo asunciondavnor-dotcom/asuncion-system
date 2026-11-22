@@ -36,7 +36,7 @@
     "inventory_dataset.py": "f4d277efbe123d1af9ee602555edec7b5e7b67ee541e1e7ea8ae26de968336b4",
     "live_updates.py": "ee448b89a6570531328c54d2dc4c3a4bfe89225afd293caad6fb120682a65a2e",
     "nlp_runtime_selection.py": "7abe8bd60edb3170b829d88f9a99d47a4d941ad09c865bddd97c99aaa557a85a",
-    "offline_ocr_mapper.py": "ef7a234a27ddc46cff90543bcc2c9e5668ef8314982d78c359e6e63288bed65b",
+    "offline_ocr_mapper.py": "bfc77bb79ea5d696b9c8c6d81212164805a11ff29429e53198672eb7913ae949",
     "ppmp_creation.py": "b63edd45fe857635696a22fe1ccd01f42934e1e62bdc1f7ca4f358955afc710c",
     "ppmp_intake.py": "f665730810f3955d2e32240479ae075bf76970278ace3e789827640d2e097692",
     "pr_po_item_matching_v0_1_0.py": "230d3de04abf87aa475b50e606bf23e61b3be9f19108d7b35df892e5abbc3f78",

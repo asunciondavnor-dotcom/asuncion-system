@@ -199,18 +199,22 @@ def _load_local_model():
     # Resolve and verify an explicit release before any cached/source model use.
     # A failed release must not quietly select the original model directory.
     try:
-        from inference_releases import selected, profile_evidence, configured_identifier, ReleaseError, SEMANTIC, require_inference
+        from inference_releases import (PROFILES, ReleaseError, SEMANTIC, configured_identifier,
+                                        profile_evidence, require_inference, selected)
         require_inference()
         identifier = configured_identifier()
         if (_MODEL is not None and getattr(_MODEL, '_psms_release_id', None) == identifier
                 and (identifier or getattr(_MODEL, '_psms_release_root', str(MODEL_DIR)) == str(MODEL_DIR))):
             return _MODEL
         release = selected()
-        model_dir = release['root'] / 'semantic' if release else MODEL_DIR
-        if release is not None and os.environ.get('OCR_SEMANTIC_MODEL_PATH'):
-            if MODEL_DIR.resolve() != model_dir.resolve():
+        if release is None:
+            model_dir = MODEL_DIR
+            profile_evidence(model_dir, 'semantic_ocr')
+        else:
+            # selected() has already verified the semantic profile and its files.
+            model_dir = release['root'] / PROFILES['semantic_ocr']
+            if os.environ.get('OCR_SEMANTIC_MODEL_PATH') and MODEL_DIR.resolve() != model_dir.resolve():
                 raise ReleaseError('RELEASE_PROFILE_PATH')
-        profile_evidence(model_dir, 'semantic_ocr')
     except RuntimeError as error:
         _MODEL_ERROR = 'Inference release failed verification.'
         safe = {'INFERENCE_DISABLED', 'RELEASE_ACTIVATION_BLOCKED', 'RELEASE_ARTIFACT_MISSING', 'RELEASE_CHECKSUM_MISMATCH',
