@@ -2144,18 +2144,13 @@ def ppmp_ocr_upload(ptype):
 def ppmp_intake():
     if request.method=='POST':
         return durable_ocr.protected(item_intake.upload,globals())
-    pending = q("""select distinct s.id,s.filename from psms_documents.sources s join ppmp_ocr_drafts d on d.source_id=s.id
-        where s.kind='ppmp' and d.status='REVIEWED' and not d.converted
-        and case when d.confidence_json IS JSON OBJECT then
-            d.confidence_json::jsonb->'_intake_verified' is not null and d.confidence_json::jsonb->'_item_approval' is null else false end
-        order by s.filename,s.id limit 100""") if is_admin() else []
-    latest = q("""select s.id,s.filename from psms_documents.sources s where s.kind='ppmp' and s.owner_id=?
-        and (not exists(select 1 from ppmp_ocr_drafts d where d.source_id=s.id)
-            or exists(select 1 from ppmp_ocr_drafts d where d.source_id=s.id and d.status in ('NEEDS_REVIEW','CATEGORY_REVIEW','REVIEWED') and not d.converted))
-        order by s.created_at desc limit 8""",(durable_ocr._uid(),))
-    return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',pending=pending,latest=latest,
-                           source=None,items=[],labels=ppmp_review_labels(),categories=item_intake.CATEGORIES,
-                           )
+    uploads = item_intake.workspace_sources(globals())
+    if uploads:
+        selected = request.args.get('source')
+        source = next((row for row in uploads if str(row['id']) == selected), None) if selected else uploads[0]
+        if source is None:abort(404)
+        return redirect(url_for('ppmp_intake_review',sid=source['id']))
+    return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',source=None,uploads=uploads)
 
 
 @app.get('/items/sample.xlsx')

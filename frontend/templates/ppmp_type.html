@@ -1,7 +1,6 @@
 {% extends 'base.html' %}{% from 'ui.html' import extracted_item_fields %}{% block content %}
 <div class="breadcrumb"><a href="{{url_for('dashboard')}}">Home</a><span>›</span><a href="{{url_for('ppmp_home')}}">PPMP</a><span>›</span>{{ptype}}</div>
 <div class="toolbar page-head"><div><h2>PPMP - {{ptype}}</h2><p class="muted">{{'Department of Budget and Management (DBM)' if ptype=='DBM' else ptype}} category</p></div><div class="actions"><a class="btn small" href="{{url_for('ppmp_home')}}">Back to PPMP</a><button class="btn primary" form="ppmpSourceForm" name="action" value="create_ppmp" data-ppmp-create>{{icon()}}Create Official PPMP</button></div></div>
-<p><a class="btn" href="{{url_for('ppmp_intake')}}">Upload Items</a></p>
 {% set item_filters=item_filters|default({'item_q':'','item_sort':'source','item_review':'','item_source':''}) %}
 {% set draft_page=draft_page|default({'page':1,'total':ocr_rows|length,'has_next':false}) %}
 <form method="get" class="filters" data-auto-filters data-record-navigation aria-label="PPMP source item filters">
@@ -14,7 +13,6 @@
 </form>
 <form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <p id="ppmpCreationFeedback" class="notice" data-category="error" role="alert" tabindex="-1" {% if not creation_validation %}hidden{% endif %}>{{creation_validation.message if creation_validation else ''}}</p>
-<div class="actions"><a class="btn" href="{{url_for('ppmp_dataset')}}">Upload items in Inventory Item Source</a><a class="btn" href="{{url_for('ppmp_intake')}}">Saved uploads and Document History</a></div>
 {% set active_source = namespace(count=0) %}{% for item in ocr_rows if ocr_state and item.source_id|string==ocr_state.source_id|string %}{% set active_source.count=active_source.count+1 %}{% endfor %}
 {% if active_source.count %}
 <div class="ocr-result-banner"><div><strong>{{active_source.count}} active extracted draft{{'' if active_source.count==1 else 's'}} from this upload on this page</strong><span>{{ocr_state.filename or 'Uploaded document'}} · {{ocr_state.method or 'local extraction'}}</span></div><div class="actions"><button class="btn small" name="action" value="clear_ocr" type="submit" formnovalidate>Clear extraction</button></div></div>

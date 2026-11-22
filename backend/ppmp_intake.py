@@ -405,6 +405,16 @@ def reprocess(api,sid):
         return extract_saved(api,str(sid),run_id,source['filename'],source['extension'],bytes(source['content']))
 
 
+def workspace_sources(api):
+    return api['q']("""select s.id,s.filename from psms_documents.sources s
+        where s.kind='ppmp' and (s.owner_id=? or (? and exists (
+            select 1 from ppmp_ocr_drafts d where d.source_id=s.id and d.status='REVIEWED' and not d.converted
+            and case when d.confidence_json IS JSON OBJECT then
+                d.confidence_json::jsonb->'_intake_verified' is not null
+                and d.confidence_json::jsonb->'_item_approval' is null else false end)))
+        order by s.created_at desc,s.id desc limit 100""",(durable._uid(),api['is_admin']()))
+
+
 def review(api,sid):
     sid=str(sid)
     admin=api['is_admin']()
@@ -532,7 +542,8 @@ def review(api,sid):
         values={key:request.args[key] for key in request.args if key in ('q','sort','category','page','sheet') or key.startswith('h_')}
         values.update(changes)
         return url_for('ppmp_intake_review',sid=sid,**values)
-    return render_template('ppmp_intake.html',active='ppmp',title='PPMP Document Review',source=source,
+    return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',source=source,
+        uploads=workspace_sources(api),
         items=items,labels=api['ppmp_review_labels'](),categories=CATEGORIES,page=page,has_next=has_next,
         summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url)
 

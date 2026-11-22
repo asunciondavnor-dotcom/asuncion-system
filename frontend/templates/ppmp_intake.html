@@ -5,16 +5,35 @@
   {%- else -%}For Review{%- endif -%}
 {%- endmacro %}
 {% block content %}
-{% if source %}<div class="actions item-review-navigation"><a class="btn" href="{{url_for('ppmp_intake')}}">Back to Upload Items</a></div>{% endif %}
-{% if not source %}
-<section class="card"><form method="post" enctype="multipart/form-data" data-document-processing{% if config.get('RENDER_MODEL_PREPARATION') %} data-model-preparation="{{url_for('inference_preparation',kind='semantic')}}"{% endif %}>
-<input type="hidden" name="csrf_token" value="{{csrf_token()}}">
-<label>Item document <input type="file" name="ocr_file" accept=".xlsx,.xlsm,.pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.csv,.docx,.txt" required></label>
-<button class="btn primary">Upload and extract</button><a class="btn" href="{{url_for('item_upload_sample')}}">Download sample Excel file</a>
-<p data-processing-message hidden role="status"></p></form></section>
-{% if latest %}<section class="card"><h3>Continue item review</h3><ul>{% for upload in latest %}<li><a href="{{url_for('ppmp_intake_review',sid=upload.id)}}">{{upload.filename}}</a></li>{% endfor %}</ul></section>{% endif %}
-{% if pending %}<section class="card"><h3>Awaiting authorized approval</h3><ul>{% for upload in pending %}<li><a href="{{url_for('ppmp_intake_review',sid=upload.id)}}">{{upload.filename}}</a></li>{% endfor %}</ul></section>{% endif %}
-{% endif %}
+<section class="card document-workspace intake-controls">
+  <div class="toolbar">
+    {% if uploads %}
+    <form method="get" action="{{url_for('ppmp_intake')}}" class="actions">
+      <input type="hidden" name="_nav" value="{{navigation_token('ppmp_intake')}}">
+      <label>Uploaded document<select name="source" required>
+        {% if source and not uploads|selectattr('id','equalto',source.id)|list %}<option value="{{source.id}}" selected disabled>{{source.filename}}</option>{% endif %}
+        {% for upload in uploads %}<option value="{{upload.id}}" {{'selected' if source and upload.id==source.id}}>{{upload.filename}}</option>{% endfor %}
+      </select></label>
+      <button class="btn" type="submit">Open items</button>
+    </form>
+    {% endif %}
+    <div class="actions">
+      <button type="button" class="btn primary" data-item-dialog="upload-item-file" aria-haspopup="dialog">Upload and extract</button>
+      <a class="btn" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
+    </div>
+  </div>
+</section>
+<dialog id="upload-item-file" class="item-review-dialog" aria-labelledby="upload-item-title" data-item-review>
+  <header class="item-review-heading"><h2 id="upload-item-title">Upload item document</h2><form method="dialog"><button class="btn small">Close</button></form></header>
+  <div class="item-review-body">
+    <form method="post" action="{{url_for('ppmp_intake')}}" enctype="multipart/form-data" data-document-processing{% if config.get('RENDER_MODEL_PREPARATION') %} data-model-preparation="{{url_for('inference_preparation',kind='semantic')}}"{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+      <label>Item document <input type="file" name="ocr_file" accept=".xlsx,.xlsm,.pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.csv,.docx,.txt" required></label>
+      <div class="actions"><button class="btn primary">Upload and extract</button><a class="btn" href="{{url_for('item_upload_sample')}}">Download sample Excel file</a></div>
+      <p data-processing-message hidden role="status"></p>
+    </form>
+  </div>
+</dialog>
 {% if source %}{% set extraction=source.extraction or {} %}
 <section class="card document-workspace"><div class="toolbar"><div><span class="badge info">DOCUMENT SAVED</span><h3>{{source.filename}}</h3><p class="muted">Source {{source.id}} · Uploaded {{source.created_at|philippine_time}}</p></div><div class="actions"><a class="btn" href="{{url_for('ppmp_intake_source',sid=source.id)}}">Download original</a><a class="btn" href="{{url_for('document_history_detail',sid=source.id)}}">Process history</a></div></div>
 <p class="notice" data-live-status="extraction" role="status">{% if run and run.status=='PROCESSING' %}Extraction processing.{% elif run and run.status=='FAILED' %}Extraction failed. The original and previous corrections remain available.{% elif summary.total==0 %}No reliable rows were detected. Review the saved original and enter the missing item.{% elif run and run.status=='INCOMPLETE' %}Review the extracted rows against the original. Some source details may be incomplete.{% else %}Extraction completed. Verify items and send them for authorized approval.{% endif %}</p>
@@ -112,4 +131,4 @@
 {% if (summary.total==0 or extraction.get('method')=='OCR of numbered PPMP item column') and source.owner_id==session.get('user_id') and (not run or run.status!='PROCESSING') %}
 <details class="card"><summary>Add an item from the saved original</summary><form method="post" class="form-grid"><input type="hidden" name="action" value="add"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><label>Category<select name="category" required>{% for category in categories %}<option>{{category}}</option>{% endfor %}</select></label>{% for label in labels %}<label>{{label}}<textarea name="field_{{loop.index0}}" maxlength="5000"></textarea></label>{% endfor %}<label><input type="checkbox" name="confirm_category" value="yes" required> I copied the item from the saved original</label><button class="btn">Save for review</button></form></details>{% endif %}
 {% if extraction.get('warnings') %}<div class="warning-box"><strong>Extraction needs review</strong><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}{% if session.get('role')=='Admin' %}<details class="card"><summary>Original extracted text</summary><pre class="raw-ocr-pre">{{extraction.get('text','')}}</pre></details>{% endif %}
-{% endif %}{% endblock %}{% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>{% endblock %}
+{% else %}<section class="card document-workspace"><div class="table-scroll"><table class="table document-items"><thead><tr><th>Item</th><th>Quantity / unit</th><th>Category</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td colspan="5">Upload a document to extract and review its items here.</td></tr></tbody></table></div></section>{% endif %}{% endblock %}{% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>{% endblock %}
