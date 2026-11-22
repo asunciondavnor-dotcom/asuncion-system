@@ -17,6 +17,7 @@
 {% if active in ['ppmp','app','pr','aoq','po','nlp','iar','ris','inventory','users','account','audit','reports'] and not workflow_preview %}<script defer src="{{url_for('static',filename='js/procurement-workspace.js')}}"></script>{% endif %}
 <script defer src="{{url_for('static',filename='js/source-preview.js')}}"></script>
 <script defer src="{{url_for('static',filename='js/record-selectors.js')}}"></script>
+{% if config.get('RENDER_MODEL_PREPARATION') and not workflow_preview and active in ('ppmp','nlp') %}<script defer src="{{url_for('static',filename='js/model-preparation.js')}}"></script>{% endif %}
 {% block head_extra %}{% endblock %}
 </head><body data-workflow-preview="{{'true' if workflow_preview else 'false'}}" data-sync-url="{{url_for('sync_revisions')}}" data-sync-topics='{{([] if workflow_preview else sync_topics(active))|tojson}}' class="reference-shell{% if active=='dashboard' %} approved-dashboard{% endif %}{% if active in ['ppmp','app','pr','aoq','po','nlp'] %} procurement-page{% endif %}">
 <a class="skip-link" href="#mainContent">Skip to content</a>

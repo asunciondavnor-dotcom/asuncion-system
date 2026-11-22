@@ -67,6 +67,8 @@ app = Flask(
 configure_runtime(app)
 from nlp_runtime_selection import configure as configure_nlp_runtime
 configure_nlp_runtime(app, BASE_DIR)
+import render_model_preparation
+app.config['RENDER_MODEL_PREPARATION'] = render_model_preparation.enabled(app.config)
 app.config['PR_PO_ITEM_COMPARISON_ENABLED'] = os.environ.get('PSMS_ITEM_COMPARISON_ENABLED', '1') == '1'
 durable_ocr.register(app)
 app.secret_key = os.environ.get('PSMS_SECRET_KEY')
@@ -1978,11 +1980,15 @@ def trained_nlp_model_status():
     if not app.config.get('PSMS_INFERENCE_ENABLED',True):
         return {'active':False,'message':'OCR/NLP inference is disabled pending an approved release.',
                 'diagnostic_code':'INFERENCE_DISABLED'}
+    if (render_model_preparation.enabled(app.config)
+            and render_model_preparation.state('rf', app.config) != 'ready'):
+        return {'active': False, 'can_prepare': True,
+                'message': 'The approved verification model prepares before use.'}
     try:
         from nlp_runtime_selection import runtime, model_root
         return runtime(app.config).model_status(model_root(app.config, NLP_FASTTEXT_DIR))
-    except Exception as error:
-        return {'active': False, 'message': f'Unable to inspect FastText model: {error}'}
+    except Exception:
+        return {'active': False, 'message': 'The approved FastText model is unavailable.'}
 
 
 def algorithm_comparison():
@@ -1990,7 +1996,8 @@ def algorithm_comparison():
     model_state = trained_nlp_model_status()
     active = bool(model_state.get('active'))
     manifest = model_state.get('manifest') or {}
-    selected = manifest.get('deployed_model') or 'FastText + Logistic Regression'
+    default = 'FastText + Random Forest' if app.config.get('PSMS_NLP_RUNTIME') == 'retrained_rf' else 'FastText + Logistic Regression'
+    selected = manifest.get('deployed_model') or default
     algorithms = []
     for family in ('Logistic Regression', 'Linear SVM', 'Random Forest'):
         name = 'FastText + ' + family
@@ -2112,6 +2119,19 @@ def ppmp_edit_table(ptype):
 # OCR Upload Route
 # ---------------------------
 # OCR Upload Route
+@app.route('/api/inference/prepare/<kind>', methods=['POST'])
+def inference_preparation(kind):
+    if kind not in render_model_preparation.KINDS or not render_model_preparation.enabled(app.config):
+        abort(404)
+    from nlp_runtime_selection import require_available
+    require_available(app.config)
+    state = render_model_preparation.state(kind, app.config, start=request.form.get('start') == 'yes')
+    response = jsonify(state=state)
+    response.status_code = {'preparing': 202, 'failed': 503}.get(state, 200)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
 @app.route('/ppmp/<ptype>/upload_ocr', methods=['POST'])
 def ppmp_ocr_upload(ptype):
     return durable_ocr.protected(durable_ocr.ppmp_upload, globals(), ptype)
@@ -4376,7 +4396,11 @@ def audit():
 @app.route('/health')
 def health():
     model_state = trained_nlp_model_status()
-    mapper_state = ocr_mapper_model_status()
+    if (render_model_preparation.enabled(app.config)
+            and render_model_preparation.state('semantic', app.config) != 'ready'):
+        mapper_state = {'active': False, 'message': 'The approved semantic model prepares before use.'}
+    else:
+        mapper_state = ocr_mapper_model_status()
     database_ok = bool(db_ping())
     tesseract_ok = bool(configure_tesseract() or shutil.which('tesseract'))
     fasttext_ok = bool(model_state.get('active'))

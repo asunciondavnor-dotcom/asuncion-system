@@ -10,6 +10,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 import platform
 import re
@@ -89,6 +90,29 @@ def sha256(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _file_revision(path):
+    info = path.stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+@lru_cache(maxsize=64)
+def _packaged_artifact_sha256(path, revision):
+    digest = sha256(path)
+    require(_file_revision(path) == revision, 'RELEASE_CHECKSUM_MISMATCH')
+    return digest
+
+
+def artifact_sha256(path):
+    """Reuse a checksum only for an unchanged, read-only Render image file."""
+    path = Path(path)
+    if (sys.platform == 'linux' and os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'
+            and os.environ.get('PSMS_INFERENCE_CACHE_ENABLED') == '0'
+            and os.geteuid() != 0 and path.is_relative_to(BASE / 'inference_releases')
+            and not any(os.access(part, os.W_OK, effective_ids=True) for part in (path, *path.parents))):
+        return _packaged_artifact_sha256(path, _file_revision(path))
+    return sha256(path)
 
 
 def safe_path(root, name, *, exists=True):
@@ -232,7 +256,7 @@ def verify(identifier, *, base=BASE, deployment=False, profiles=('legacy', 'sema
         total = 0
         for name, record in artifacts.items():
             path = safe_path(root, name)
-            require(path.stat().st_size == record['bytes'] and sha256(path) == record['sha256'],
+            require(path.stat().st_size == record['bytes'] and artifact_sha256(path) == record['sha256'],
                     'RELEASE_CHECKSUM_MISMATCH')
             total += record['bytes']
         return {'root': root, 'manifest': manifest, 'manifest_sha256': entry['manifest_sha256'],

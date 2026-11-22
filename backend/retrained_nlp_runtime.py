@@ -59,7 +59,7 @@ def verify_artifacts(model_root):
     """Verify every declared file before executing feature code or loading pickle."""
     try:
         root = Path(model_root).resolve()
-        from inference_releases import profile_evidence
+        from inference_releases import artifact_sha256, profile_evidence
         # A source-only cold start has no directory until release verification
         # materializes the approved private cache. Keep retrieval/integrity gates first.
         release = profile_evidence(root, 'retrained_rf')
@@ -76,12 +76,13 @@ def verify_artifacts(model_root):
             _require(manifest['schema'] == 'SHARED_FASTTEXT_THREE_CLASSIFIERS_EXPERIMENT_V1'
                  and manifest['smoke_only'] is False and manifest['fasttext_models'] == 1,
                  'RETRAINED_ARTIFACT_VERSION')
+        checksum = artifact_sha256 if release is not None else _sha
         for name, digest in manifest['files'].items():
             relative = PurePosixPath(name)
             _require(not relative.is_absolute() and '..' not in relative.parts,
                      'RETRAINED_UNSAFE_ARTIFACT_PATH')
             path = (root / name).resolve(strict=True)
-            _require(path.is_relative_to(root) and _sha(path) == digest,
+            _require(path.is_relative_to(root) and checksum(path) == digest,
                      'RETRAINED_CHECKSUM_MISMATCH')
         heads = [p for p in manifest['files'] if p.endswith('.joblib')]
         _require(len(heads) == (2 if release else 48), 'RETRAINED_HEAD_COUNT')
@@ -127,6 +128,11 @@ class Assets:
     verification: dict
 
 
+def assets_ready(model_root, release):
+    assets = _CACHE.get(str(Path(model_root).resolve()))
+    return assets is not None and assets.verification.get('selected_release_id') == release
+
+
 def clear_cache():
     with _LOCK:
         _CACHE.clear()
@@ -152,8 +158,9 @@ def build_features(assets, pr_text, po_text):
 def load_assets(model_root):
     """Load once per process after integrity, dependency, shape and reload checks."""
     from inference_releases import require_inference
+    from offline_ocr_mapper import model_memory_scope
     require_inference()
-    with _LOCK:
+    with model_memory_scope(), _LOCK:
         key = str(Path(model_root).resolve())
         if key in _CACHE:
             _require(_CACHE[key].verification.get('selected_release_id') ==
@@ -210,18 +217,22 @@ def load_assets(model_root):
 
 def _predict(head, matrix, labels):
     import numpy as np
-    label = str(head.predict(matrix)[0])
     raw = np.asarray(head.predict_proba(matrix)[0])
-    _require(label in labels and raw.shape == (len(labels),) and np.isfinite(raw).all()
+    _require(raw.shape == (len(labels),) and np.isfinite(raw).all()
              and (raw >= 0).all() and (raw <= 1).all() and np.isclose(raw.sum(), 1),
              'RETRAINED_INVALID_PREDICTION')
+    # RandomForestClassifier.predict selects the first maximum in these same
+    # probabilities. Reuse them to avoid a second traversal of every tree.
+    label = str(head.classes_[raw.argmax()])
+    _require(label in labels, 'RETRAINED_INVALID_PREDICTION')
     probabilities = {str(cls): float(value) * 100 for cls, value in zip(head.classes_, raw)}
     return label, probabilities[label], probabilities
 
 
 def predict_pair(model_root, pr_text, po_text):
     from render_resource_logging import measure
-    with measure('pr_po_nlp'):
+    from offline_ocr_mapper import model_memory_scope
+    with measure('pr_po_nlp'), model_memory_scope():
         return _predict_pair(model_root, pr_text, po_text)
 
 

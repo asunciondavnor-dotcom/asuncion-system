@@ -72,6 +72,18 @@ def _snapshot():
     return Snapshot(monotonic(), process_time(), current_mib, peak_mib, 'process', 'process')
 
 
+def has_memory_headroom(required_bytes):
+    group = _cgroup_directory()
+    if group is None:
+        return False
+    try:
+        limit = int((group / 'memory.max').read_text())
+        current = int((group / 'memory.current').read_text())
+    except (OSError, ValueError):
+        return False
+    return limit - current >= required_bytes
+
+
 def _log(operation, start, end, status):
     elapsed = max(end.clock - start.clock, 0)
     cpu = max(end.cpu_seconds - start.cpu_seconds, 0) if end.scope == start.scope else None

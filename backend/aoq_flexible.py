@@ -18,8 +18,9 @@ from collections import Counter, OrderedDict
 from typing import Any, Dict, Iterable, List, Tuple
 
 from openpyxl import load_workbook
-from PIL import Image, ImageFilter, ImageOps, ImageSequence
+from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageSequence
 import pytesseract
+from tempfile import TemporaryDirectory
 
 SUPPORTED_EXTENSIONS = {
     ".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff",
@@ -228,12 +229,14 @@ def _preprocess_variants(image: Image.Image, warnings: List[str] | None = None):
 
 
 _DOCUMENT_DEADLINE = ContextVar('document_deadline', default=None)
-_DOCUMENT_SLOTS = BoundedSemaphore(1 if os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1' else 2)
+_RENDER_OCR = os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'
+_DOCUMENT_SECONDS = 80 if _RENDER_OCR else 60
+_DOCUMENT_SLOTS = BoundedSemaphore(1 if _RENDER_OCR else 2)
 
 
 def _processing_time_left():
     deadline = _DOCUMENT_DEADLINE.get()
-    remaining = deadline-monotonic() if deadline is not None else 60
+    remaining = deadline-monotonic() if deadline is not None else _DOCUMENT_SECONDS
     if remaining <= 0: raise RuntimeError('Document processing time limit exceeded; review a smaller document.')
     return remaining
 
@@ -310,25 +313,92 @@ def _ocr_image(image: Image.Image, warnings: List[str] | None = None) -> str:
     return candidates[0][0]
 
 
+def _ocr_rgb_frame(image):
+    image.load()
+    if image.getexif().get(274) in (2, 3, 4, 5, 6, 7, 8):
+        image = ImageOps.exif_transpose(image)
+    return image if image.mode == 'RGB' else image.convert('RGB')
+
+
+def _ocr_content_bounds(image):
+    """Find removable white margins with a bounded temporary image."""
+    if (os.environ.get('PSMS_RENDER_OCR_BUDGET') != '1'
+            or image.mode not in ('RGB', 'L') or image.width * image.height < 4_000_000):
+        return None
+    left, top, right, bottom = image.width, image.height, 0, 0
+    for offset in range(0, image.height, 128):
+        with image.crop((0, offset, image.width, min(image.height, offset + 128))) as strip:
+            with ImageChops.invert(strip) as inverted:
+                bounds = inverted.getbbox()
+        if bounds:
+            x0, y0, x1, y1 = bounds
+            left, top = min(left, x0), min(top, y0 + offset)
+            right, bottom = max(right, x1), max(bottom, y1 + offset)
+    if not bottom:
+        return None
+    left, top = max(0, left - 64), max(0, top - 64)
+    right, bottom = min(image.width, right + 64), min(image.height, bottom + 64)
+    if (right - left) * (bottom - top) <= image.width * image.height * 0.75:
+        return left, top, right, bottom
+    return None
+
+
+_UNMEASURED_CONTENT = object()
+
+
+def _ocr_page_data(image, timeout, origin=(0, 0), *, bounds=_UNMEASURED_CONTENT):
+    """Skip blank margins without resizing evidence or moving its coordinates."""
+    left, top = origin
+    if bounds is _UNMEASURED_CONTENT:
+        bounds = _ocr_content_bounds(image)
+    if bounds:
+        image = image.crop(bounds)
+        left, top = left + bounds[0], top + bounds[1]
+    options = dict(config='--oem 3 --psm 6', output_type=pytesseract.Output.DICT)
+    if os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1':
+        with TemporaryDirectory(prefix='psms-ocr-') as directory:
+            path = os.path.join(directory, 'page.png')
+            # Lighter compression preserves all source pixels and PNG metadata.
+            image.save(path, format='PNG', compress_level=1)
+            data = pytesseract.image_to_data(path, timeout=min(timeout, _processing_time_left()), **options)
+    else:
+        original_format = image.format
+        try:
+            image.format = 'PNG'
+            data = pytesseract.image_to_data(image, timeout=timeout, **options)
+        finally:
+            image.format = original_format
+    if left or top:
+        data['left'] = [value + left for value in data['left']]
+        data['top'] = [value + top for value in data['top']]
+    return data
+
+
 def _read_scanned_page(image, source, page_number):
     """Retain physical table cells; unsupported scans remain editable evidence."""
     from aoq_ocr_tables_v0_2_0 import extract_ruled_table
+    # Retain headroom in the proxy request for mapping and persistence.
+    pass_timeout = 24 if _RENDER_OCR else 10
+    content_bounds = {}
     document = extract_ruled_table(image, source=source, page=page_number,
-                                   timeout=10, time_remaining=_processing_time_left)
+                                   timeout=pass_timeout, time_remaining=_processing_time_left,
+                                   content_bounds=content_bounds)
     for table in document['tables']:
         table['cells'] = [cell for cell in document['ocr_cells'] if cell.get('source') == table.get('source')]
     document['manual_review_required'] = True
     # Capture a single full-page pass, including text outside physical grids.
     # Keep word positions for borderless tables instead of flattening row values.
     from procurement_document_layout import positioned_table, ordered_word_text, positioned_shared_fields
-    from PIL import ImageOps
-    frame = ImageOps.exif_transpose(image).convert('RGB')
+    frame = _ocr_rgb_frame(image)
     rotation = document.get('orientation_degrees') or 0
-    frame = frame.rotate(rotation, expand=True)
+    if rotation:
+        frame = frame.rotate(rotation, expand=True)
     _configure_tesseract()
     # Ruled extraction already establishes orientation from physical headers.
     # Borderless pages need a separate bounded orientation/deskew check.
+    bounds = content_bounds.get(rotation, _UNMEASURED_CONTENT) if document['tables'] else _UNMEASURED_CONTENT
     if not document['tables']:
+        _processing_time_left()
         try:
             osd = pytesseract.image_to_osd(frame, output_type=pytesseract.Output.DICT,
                 timeout=min(5, _processing_time_left()))
@@ -344,8 +414,7 @@ def _read_scanned_page(image, source, page_number):
         document['deskew_degrees'] = skew
     document['orientation_degrees'] = rotation
     try:
-        data = pytesseract.image_to_data(frame, config='--oem 3 --psm 6',
-            output_type=pytesseract.Output.DICT, timeout=min(10, _processing_time_left()))
+        data = _ocr_page_data(frame, min(pass_timeout, _processing_time_left()), bounds=bounds)
         words = []
         raw_lines = OrderedDict()
         for i, text in enumerate(data.get('text', [])):
@@ -467,13 +536,17 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
                 methods.add("native PDF text")
             else:
                 scanned = True
-                if page.rect.width * page.rect.height * 2.5**2 > 16_000_000:
+                raster_pixels = page.rect.width * page.rect.height * 2.5**2
+                if raster_pixels > 16_000_000:
                     warnings.append(f'PDF page {page_index + 1}: raster size exceeds the OCR limit; manual source review required.')
                     continue
-                pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
-                mode = "RGB" if pix.n < 4 else "RGBA"
-                image = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-                detected = _read_scanned_page(image, f'PDF page {page_index + 1}, scanned table', page_index + 1)
+                from offline_ocr_mapper import raster_memory_scope
+                with raster_memory_scope(raster_pixels):
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
+                    mode = "RGB" if pix.n < 4 else "RGBA"
+                    with Image.frombytes(mode, (pix.width, pix.height), pix.samples) as image:
+                        del pix
+                        detected = _read_scanned_page(image, f'PDF page {page_index + 1}, scanned table', page_index + 1)
                 texts.append(f'--- Page {page_index + 1} ---\n{detected["raw_text"]}')
                 tables.extend(detected['tables'])
                 ocr_cells.extend(detected['ocr_cells'])
@@ -580,6 +653,8 @@ def _read_pdf(filepath: str) -> Dict[str, Any]:
 
 
 def _read_image(filepath: str) -> Dict[str, Any]:
+    from offline_ocr_mapper import raster_memory_scope
+
     pages = []
     warnings = []
     tables, ocr_cells = [], []
@@ -589,7 +664,8 @@ def _read_image(filepath: str) -> Dict[str, Any]:
             if page_no > 30:
                 warnings.append("Only the first 30 image pages/frames were processed.")
                 break
-            detected = _read_scanned_page(frame.copy(), f'Image frame {page_no}, scanned table', page_no)
+            with raster_memory_scope(frame.width * frame.height):
+                detected = _read_scanned_page(frame, f'Image frame {page_no}, scanned table', page_no)
             text = detected['raw_text']
             tables.extend(detected['tables'])
             ocr_cells.extend(detected['ocr_cells'])
@@ -794,7 +870,7 @@ def _read_txt(filepath: str) -> Dict[str, Any]:
 def extract_document(filepath: str) -> Dict[str, Any]:
     if not _DOCUMENT_SLOTS.acquire(timeout=1):
         raise RuntimeError('Document processing is busy; retry shortly.')
-    token = _DOCUMENT_DEADLINE.set(monotonic()+60)
+    token = _DOCUMENT_DEADLINE.set(monotonic() + _DOCUMENT_SECONDS)
     try:
         from render_resource_logging import measure
         with measure('document_extraction'):

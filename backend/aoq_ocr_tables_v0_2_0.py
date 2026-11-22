@@ -10,10 +10,11 @@ import math
 import re
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw
 import pytesseract
 
-from aoq_flexible import _configure_tesseract, _map_header, _table_text
+from aoq_flexible import (_configure_tesseract, _map_header, _ocr_content_bounds,
+                          _ocr_page_data, _ocr_rgb_frame, _table_text)
 from aoq_ocr_tables_v0_1_0 import _centres, cells_from_words
 
 VERSION = '0.2.0'
@@ -29,9 +30,23 @@ def decimal_evidence(value):
     return number if number.is_finite() else None
 
 
-def _grid(image, threshold):
-    ink = np.asarray(image.convert('L')) < threshold
-    ys = _centres(np.flatnonzero(ink.mean(axis=1) >= .60))
+def _ink_area(ink):
+    rows = np.flatnonzero(ink.any(axis=1))
+    if not rows.size:
+        return None
+    columns = np.flatnonzero(ink.any(axis=0))
+    return int(columns[0]), int(rows[0]), int(columns[-1]) + 1, int(rows[-1]) + 1
+
+
+def _grid(gray, threshold, page_width):
+    ink = gray < threshold
+    bounds = _ink_area(ink)
+    if bounds is None:
+        return None
+    x0, y0, x1, y1 = bounds
+    ink = ink[y0:y1, x0:x1]
+    # Blank columns contribute zero, but still count toward the page width.
+    ys = _centres(np.flatnonzero(ink.sum(axis=1) / page_width >= .60))
     if not 3 <= len(ys) <= 202:
         return None
     xs = _centres(np.flatnonzero(ink[ys[0]:ys[-1] + 1].mean(axis=0) >= .65))
@@ -39,33 +54,38 @@ def _grid(image, threshold):
         return None
     if min(b-a for a, b in zip(xs, xs[1:])) < 20 or min(b-a for a, b in zip(ys, ys[1:])) < 12:
         return None
-    return xs, ys
+    return [int(x + x0) for x in xs], [int(y + y0) for y in ys]
 
 
-def detect_grid(image):
+def detect_grid(image, bounds=None):
     """Recover faded visible rules; do not infer absent row/column borders."""
     if image.width * image.height > 16_000_000 or min(image.size) < 50:
         return None
-    physical = _physical_grid(image)
-    if physical is not None:
-        return physical
-    candidates = [_grid(image, threshold) for threshold in (150, 200, 220)]
-    valid = [grid for grid in candidates if grid is not None]
-    if not valid:
-        return None
-    # Contradictory physical topology is not resolved by picking more cells.
-    if len({(len(xs), len(ys)) for xs, ys in valid}) != 1:
-        return None
-    # Projection peaks alone can be letters in a decorative banner. Require
-    # continuous vertical rules between the actual horizontal intersections.
-    xs, ys = valid[0]
-    ink = np.asarray(image.convert('L')) < 220
-    if any(ink[ys[0]:ys[-1]+1,max(0,x-1):x+2].mean(axis=1).mean() < .85 for x in xs):
-        return None
-    return xs, ys
+    if bounds:
+        with image.crop(bounds) as area:
+            gray = np.asarray(area.convert('L'))
+    else:
+        gray = np.asarray(image.convert('L'))
+    grid = _physical_grid(gray, image.height)
+    if grid is None:
+        candidates = [_grid(gray, threshold, image.width) for threshold in (150, 200, 220)]
+        valid = [grid for grid in candidates if grid is not None]
+        # Contradictory physical topology cannot be resolved by taking more cells.
+        if not valid or len({(len(xs), len(ys)) for xs, ys in valid}) != 1:
+            return None
+        xs, ys = valid[0]
+        # Decorative text can create projection peaks. Check continuity between intersections.
+        if any((gray[ys[0]:ys[-1]+1,max(0,x-1):x+2] < 220).mean(axis=1).mean() < .85 for x in xs):
+            return None
+        grid = xs, ys
+    if not bounds:
+        return grid
+    left, top = bounds[:2]
+    xs, ys = grid
+    return [x + left for x in xs], [y + top for y in ys]
 
 
-def _physical_grid(image):
+def _physical_grid(gray, page_height):
     """Find thin continuous rules, then validate their shared region and edges.
 
     Opening removes glyph strokes. Removing wide fills separates rules from
@@ -73,13 +93,31 @@ def _physical_grid(image):
     No document-specific coordinates or source values participate.
     """
     from scipy.ndimage import minimum_filter1d, maximum_filter1d, label, find_objects
-    gray = np.asarray(image.convert('L'))
     ink = gray < 235
-    length = max(35,min(160,image.height//10))
-    vertical = maximum_filter1d(minimum_filter1d(ink,size=length,axis=0,mode='constant'),
-                                size=length,axis=0,mode='constant')
-    thin = vertical & ink & ~minimum_filter1d(ink,size=9,axis=1,mode='constant')
+    length = max(35,min(160,page_height//10))
+    # The filters' constant background is also the value of unmarked pixels.
+    # Keep the edge-check halo and use the original page height for rule length.
+    bounds = _ink_area(ink)
+    if bounds is None:
+        return None
+    x0, y0, x1, y1 = bounds
+    x0, y0 = max(0, x0 - 4), max(0, y0 - 4)
+    x1 = min(gray.shape[1], x1 + 4)
+    y1 = min(gray.shape[0], y1 + 4)
+    if (x1 - x0) * (y1 - y0) <= ink.size * 0.75:
+        gray = gray[y0:y1, x0:x1]
+        ink = ink[y0:y1, x0:x1].copy()
+    else:
+        x0 = y0 = 0
+    thin = minimum_filter1d(ink, size=length, axis=0, mode='constant')
+    vertical = maximum_filter1d(thin, size=length, axis=0, mode='constant')
+    minimum_filter1d(ink, size=9, axis=1, mode='constant', output=thin)
+    np.logical_not(thin, out=thin)
+    np.logical_and(thin, ink, out=thin)
+    np.logical_and(thin, vertical, out=thin)
+    del ink
     labelled,_ = label(thin)
+    del thin
     lines=[]
     for region in find_objects(labelled):
         if region is None:continue
@@ -104,7 +142,7 @@ def _physical_grid(image):
         if not 6<=len(xs)<=31 or min(b-a for a,b in zip(xs,xs[1:]))<20:continue
         top=min(a for _,a,_ in group)
         bottom=round(float(np.median([b for _,_,b in group])))
-        strip=gray[max(0,top-3):min(image.height,bottom+3),xs[0]:xs[-1]+1].astype(np.int16)
+        strip=gray[max(0,top-3):min(gray.shape[0],bottom+3),xs[0]:xs[-1]+1].astype(np.int16)
         # Real horizontal borders/colour transitions span most columns. Header
         # letters change only a small part of a row and cannot establish a rule.
         edges=(np.abs(np.diff(strip,axis=0))>20).mean(axis=1)
@@ -115,27 +153,29 @@ def _physical_grid(image):
         candidates.append((len(xs)*len(ys),(xs[-1]-xs[0])*(ys[-1]-ys[0]),xs,ys))
     if not candidates:return None
     _,_,xs,ys=max(candidates,key=lambda c:(c[0],c[1]))
-    return xs,ys
+    return [int(x + x0) for x in xs], [int(y + y0) for y in ys]
 
 
-def _clean(image, xs, ys):
+def _clean(image, xs, ys, bounds):
     # Preserve clear-image pixels and decimal punctuation. Any contradictory
     # OCR numbers remain unverified; arithmetic never repairs source evidence.
-    cleaned = image.copy()
+    cleaned = image.crop(bounds) if bounds else image.copy()
+    left, top = bounds[:2] if bounds else (0, 0)
+    columns = [x - left for x in xs]
+    rows = [y - top for y in ys]
     draw = ImageDraw.Draw(cleaned)
     # Faded/blurred rules are wider than their darkest centre. Remove bounded
     # bands only; do not threshold text or synthesize characters.
-    width = 11 if _grid(image, 150) is None else 5
-    for x in xs:
-        draw.line((x, ys[0], x, ys[-1]), fill='white', width=width)
-    for y in ys:
-        draw.line((xs[0], y, xs[-1], y), fill='white', width=width)
-    return cleaned
+    width = 11 if _grid(np.asarray(cleaned.convert('L')), 150, image.width) is None else 5
+    for x in columns:
+        draw.line((x, rows[0], x, rows[-1]), fill='white', width=width)
+    for y in rows:
+        draw.line((columns[0], y, columns[-1], y), fill='white', width=width)
+    return cleaned, (left, top)
 
 
-def _ocr(image, timeout):
-    return pytesseract.image_to_data(image, config='--oem 3 --psm 6',
-                                     output_type=pytesseract.Output.DICT, timeout=timeout)
+def _ocr(image, timeout, origin=(0, 0)):
+    return _ocr_page_data(image, timeout, origin)
 
 
 def _header_score(rows):
@@ -199,12 +239,16 @@ def _safe_cells(data, xs, ys, minimum):
 
 def _merged_headers(image, xs, ys, rows):
     """Only absent interior rules can establish a physical merged header span."""
-    ink = np.asarray(image.convert('L')) < 220
+    header_rows = min(2, len(rows))
+    top = ys[0]
+    with image.crop((0, top, image.width, ys[header_rows])) as header:
+        ink = np.asarray(header.convert('L')) < 220
     spans = []
-    for r in range(min(2, len(rows))):
+    for r in range(header_rows):
         start = 0
         for boundary in range(1, len(xs)):
-            present = boundary == len(xs)-1 or ink[ys[r]+6:ys[r+1]-6, max(0, xs[boundary]-2):xs[boundary]+3].mean() >= .5
+            present = (boundary == len(xs)-1
+                       or ink[ys[r]+6-top:ys[r+1]-6-top, max(0, xs[boundary]-2):xs[boundary]+3].mean() >= .5)
             if present:
                 if boundary-start > 1:
                     texts = [v for v in rows[r][start:boundary] if v]
@@ -345,7 +389,8 @@ def review_rows(rows, *, source, page=1, evidence=(), header_spans=()):
     return quotations, checks, warnings
 
 
-def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, min_confidence=55, timeout=20, time_remaining=None):
+def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, min_confidence=55,
+                        timeout=20, time_remaining=None, content_bounds=None):
     """Recognize orthogonal orientation using source headers, with bounded OCR."""
     result = dict(candidate_version=VERSION, integrated=False, authoritative=False, source_type='Experimental ruled image',
                   extraction_method='Offline Tesseract, physical cells', tables=[], raw_text='', warnings=[],
@@ -358,31 +403,39 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
     if image.width * image.height > 16_000_000:
         result['warnings'] = ['Image exceeds candidate pixel bound; manual review required.']
         return result
-    original = ImageOps.exif_transpose(image).convert('RGB')
+    original = _ocr_rgb_frame(image)
     _configure_tesseract()
     selected = None
-    def bounded_ocr(frame):
+    def bounded_ocr(frame, origin=(0, 0)):
         remaining = min(timeout, time_remaining()) if time_remaining is not None else timeout
-        return _ocr(frame, remaining)
+        return _ocr(frame, remaining, origin)
     try:
         for rotation in (0, 90, 180, 270):
-            oriented = original.rotate(rotation, expand=True)
-            grid = detect_grid(oriented)
+            if time_remaining is not None:
+                time_remaining()
+            oriented = original.rotate(rotation, expand=True) if rotation else original
+            bounds = _ocr_content_bounds(oriented)
+            if content_bounds is not None:
+                content_bounds[rotation] = bounds
+            grid = detect_grid(oriented, bounds)
             if grid is None:
                 continue
+            if time_remaining is not None:
+                time_remaining()
             xs, ys = grid
-            cleaned = _clean(oriented, xs, ys)
-            top = cleaned.crop((0, 0, cleaned.width, ys[min(2, len(ys)-1)]))
-            header_rows, header_evidence, _ = _safe_cells(bounded_ocr(top), xs, ys, min_confidence)
+            cleaned, origin = _clean(oriented, xs, ys, bounds)
+            left, upper = origin
+            with cleaned.crop((0, 0, cleaned.width, ys[2] - upper)) as header:
+                header_data = bounded_ocr(header, origin)
+            header_rows, header_evidence, _ = _safe_cells(header_data, xs, ys, min_confidence)
             if _ppmp_header_valid(header_rows):
                 # A narrow number header may be omitted by full-width PSM 6.
                 # Retry only a blank physical header cell, never infer its text.
                 for col,value in enumerate(header_rows[0]):
                     if value or col>1:continue
-                    left,upper,right,lower=xs[col]+3,ys[0]+3,xs[col+1]-3,ys[1]-3
-                    data=bounded_ocr(cleaned.crop((left,upper,right,lower)))
-                    data['left']=[x+left for x in data['left']]
-                    data['top']=[y+upper for y in data['top']]
+                    x0,y0,x1,y1=xs[col]+3,ys[0]+3,xs[col+1]-3,ys[1]-3
+                    with cleaned.crop((x0-left,y0-upper,x1-left,y1-upper)) as cell:
+                        data=bounded_ocr(cell, (x0, y0))
                     recovered,cells,_=_safe_cells(data,xs,ys,min_confidence)
                     if recovered[0][col]:
                         header_rows[0][col]=recovered[0][col]
@@ -391,13 +444,15 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
             result['unresolved_orientations'].append(dict(rotation=rotation, header_score=_header_score(header_rows),
                                                          header_cells=header_evidence))
             if _header_score(header_rows) >= 5 or _ppmp_header_valid(header_rows):
-                selected = rotation, cleaned, xs, ys
+                selected = rotation, cleaned, origin, xs, ys
                 break
+            cleaned.close()
         if selected is None:
             result['warnings'] = ['No source-backed grid/header orientation; no quotation values were inferred.']
             return result
-        rotation, cleaned, xs, ys = selected
-        rows, evidence, warnings = _safe_cells(bounded_ocr(cleaned), xs, ys, min_confidence)
+        rotation, cleaned, origin, xs, ys = selected
+        with cleaned:
+            rows, evidence, warnings = _safe_cells(bounded_ocr(cleaned, origin), xs, ys, min_confidence)
         # The independently captured header may contain a cell missed again by
         # the full-page pass. Retain that actual header text and its confidence.
         for col,value in enumerate(header_rows[0]):
@@ -410,7 +465,7 @@ def extract_ruled_table(image, *, source='Synthetic/local candidate', page=1, mi
         return result
     for cell in evidence:
         cell.update(page=page, source=source, coordinate_space=result['coordinate_space'])
-    spans = _merged_headers(original.rotate(rotation, expand=True), xs, ys, rows)
+    spans = _merged_headers(oriented, xs, ys, rows)
     if _ppmp_header_valid(rows):
         # Planning estimates are not supplier quotations or award evidence.
         quotations,checks,diagnostics=[],[],[]

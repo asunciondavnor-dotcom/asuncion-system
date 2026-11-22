@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 import os
 import re
+import sys
+from contextlib import contextmanager, nullcontext
 from threading import RLock
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -136,6 +138,61 @@ def load_local_model():
         return _load_local_model()
 
 
+def semantic_model_ready(release):
+    model = _MODEL
+    return (model is not None and _SCHEMA_EMBEDDINGS is not None
+            and getattr(model, '_psms_release_id', None) == release)
+
+
+def encode_names(names):
+    with _MODEL_LOAD_LOCK:
+        model = _load_local_model()
+        return None if model is None else model.encode(names, normalize_embeddings=True)
+
+
+def model_memory_scope():
+    return _MODEL_LOAD_LOCK if os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1' else nullcontext()
+
+
+def _release_native_heap():
+    # Render uses glibc. Release free pages while keeping imported libraries warm.
+    if sys.platform == 'linux':
+        import ctypes
+        try:
+            trim = ctypes.CDLL(None).malloc_trim
+            trim.argtypes = (ctypes.c_size_t,)
+            trim(0)
+        except (AttributeError, OSError):
+            pass
+
+
+@contextmanager
+def raster_memory_scope(pixels):
+    """Keep large scan allocations separate from cached model allocations."""
+    if os.environ.get('PSMS_RENDER_OCR_BUDGET') != '1':
+        yield
+        return
+    with _MODEL_LOAD_LOCK:
+        global _MODEL, _SCHEMA_EMBEDDINGS
+        from render_resource_logging import has_memory_headroom
+        # Retain the light encoder for ordinary A4 scans with a conservative
+        # reserve for raster buffers, native OCR and the Tesseract subprocess.
+        reserve = 192 * 1024 * 1024
+        if pixels < 4_000_000 or (pixels <= 9_000_000
+                and type(_MODEL).__module__ == 'render_semantic_encoder'
+                and has_memory_headroom(reserve)):
+            yield
+            return
+        _MODEL = _SCHEMA_EMBEDDINGS = None
+        _release_native_heap()
+        if pixels > 9_000_000 or not has_memory_headroom(reserve):
+            rf_runtime = sys.modules.get('retrained_nlp_runtime')
+            if rf_runtime is not None:
+                rf_runtime.clear_cache()
+                _release_native_heap()
+        yield
+
+
 def _load_local_model():
     """Load only from disk. Never triggers a runtime network download."""
     global _MODEL, _MODEL_ERROR, _MODEL_ERROR_CODE, _SCHEMA_EMBEDDINGS
@@ -169,12 +226,18 @@ def _load_local_model():
         _MODEL_ERROR_CODE = 'SEMANTIC_ARTIFACTS_MISSING'
         return None
     try:
-        from sentence_transformers import SentenceTransformer
-        try:
-            model = SentenceTransformer(str(model_dir), local_files_only=True)
-        except TypeError:  # older compatible versions
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            model = SentenceTransformer(str(model_dir))
+        if (release is not None
+                and release['manifest_sha256'] == '3b6b141c5e798222331662d564eff4e363a605fc5d9b422ab6b68224493dd22b'
+                and os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'):
+            from render_semantic_encoder import MiniLMEncoder
+            model = MiniLMEncoder(model_dir)
+        else:
+            from sentence_transformers import SentenceTransformer
+            try:
+                model = SentenceTransformer(str(model_dir), local_files_only=True)
+            except TypeError:  # older compatible versions
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                model = SentenceTransformer(str(model_dir))
         meanings = [PPMP_FIELDS[k]["meaning"] for k in PPMP_FIELDS]
         _SCHEMA_EMBEDDINGS = model.encode(meanings, normalize_embeddings=True)
         if release is not None:
@@ -881,13 +944,13 @@ def map_document(document: Dict[str, Any]) -> Dict[str, Any]:
     """
     if _DOCUMENT_SEMANTIC_SCORES.get() is not None:
         return _map_document(document)
-    token = _DOCUMENT_SEMANTIC_SCORES.set({})
-    try:
-        from render_resource_logging import measure
-        with measure('semantic_mapping'):
+    from render_resource_logging import measure
+    with measure('semantic_mapping'), model_memory_scope():
+        token = _DOCUMENT_SEMANTIC_SCORES.set({})
+        try:
             return _map_document(document)
-    finally:
-        _DOCUMENT_SEMANTIC_SCORES.reset(token)
+        finally:
+            _DOCUMENT_SEMANTIC_SCORES.reset(token)
 
 
 def _map_document(document: Dict[str, Any]) -> Dict[str, Any]:

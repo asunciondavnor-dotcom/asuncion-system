@@ -143,7 +143,8 @@ def ppmp_upload(api,ptype,reprocess=False):
             prior=con.execute("select id from psms_documents.sources where owner_id=? and kind='ppmp' and sha256=? order by created_at limit 1",(uid,digest)).fetchone()
             if prior:
                 return _existing_response(ptype,prior)
-    with extraction_path(content,ext) as path:
+    from render_model_preparation import ready_for_processing
+    with ready_for_processing('semantic',api['app'].config), extraction_path(content,ext) as path:
         g.document_stage='extraction'
         extracted=api['extract_aoq_document'](path)
         extracted['filename']=name

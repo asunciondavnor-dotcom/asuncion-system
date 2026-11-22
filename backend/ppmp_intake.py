@@ -191,11 +191,13 @@ def upload(api):
     require_available(api['app'].config)
     g.document_stage='validation'
     name,ext,content=validate(request.files.get('ocr_file'))
-    sid,run_id=processing.capture(api,name,ext,content)
-    if run_id is None:
-        flash('This document is already saved. Existing corrections were preserved. Use Reprocess Extraction when needed.','info')
-        return redirect(url_for('ppmp_intake_review',sid=sid))
-    return extract_saved(api,sid,run_id,name,ext,content)
+    from render_model_preparation import ready_for_processing
+    with ready_for_processing('semantic',api['app'].config):
+        sid,run_id=processing.capture(api,name,ext,content)
+        if run_id is None:
+            flash('This document is already saved. Existing corrections were preserved. Use Reprocess Extraction when needed.','info')
+            return redirect(url_for('ppmp_intake_review',sid=sid))
+        return extract_saved(api,sid,run_id,name,ext,content)
 
 
 def extract_saved(api,sid,run_id,name,ext,content):
@@ -215,11 +217,13 @@ def extract_saved(api,sid,run_id,name,ext,content):
 def reprocess(api,sid):
     from nlp_runtime_selection import require_available
     require_available(api['app'].config)
-    source,run_id=processing.begin_existing(api,str(sid))
-    if run_id is None:
-        flash('This parser already completed extraction. Existing drafts and corrections were preserved.','info')
-        return redirect(url_for('ppmp_intake_review',sid=str(sid)))
-    return extract_saved(api,str(sid),run_id,source['filename'],source['extension'],bytes(source['content']))
+    from render_model_preparation import ready_for_processing
+    with ready_for_processing('semantic',api['app'].config):
+        source,run_id=processing.begin_existing(api,str(sid))
+        if run_id is None:
+            flash('This parser already completed extraction. Existing drafts and corrections were preserved.','info')
+            return redirect(url_for('ppmp_intake_review',sid=str(sid)))
+        return extract_saved(api,str(sid),run_id,source['filename'],source['extension'],bytes(source['content']))
 
 
 def review(api,sid):

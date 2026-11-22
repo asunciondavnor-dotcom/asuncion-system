@@ -638,25 +638,27 @@ def nlp_page(api):
         if not final_contract_ready(api):abort(409,description='The post-approval NLP save contract is not installed and reviewed. No model result or database record was fabricated.')
         from nlp_runtime_selection import require_available
         require_available(api['app'].config)
-        try:
-            result,confidence,raw=api['nlp_predict'](
-                evidence.inference_items(api['parse_items'](pr['items']),'PR'),
-                evidence.inference_items(api['parse_items'](po['items']),'PO'))
-            if raw.get('trained_model_used') is not True or result not in ('Acceptable','Needs Review','Needs Recanvass','Reject'):
-                raise RuntimeError('Trained model result required')
-            if isinstance(confidence,bool) or not math.isfinite(float(confidence)) or not 0<=float(confidence)<=100:
-                raise RuntimeError('Invalid model confidence')
-            technical=comparison(api,pr,po,semantic=True)
-            metadata=raw.get('model_metadata') or {}
-            metadata_hash=hashlib.sha256(json.dumps(metadata,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
-            artifact_hashes={}
-            if api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
-                import fasttext_nlp_runtime
-                from nlp_runtime_selection import model_root
-                for kind,path in fasttext_nlp_runtime.required_paths(model_root(api['app'].config,api['NLP_FASTTEXT_DIR'])).items():
-                    artifact_hashes[kind]=hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        except Exception:
-            abort(503,description='Model verification is unavailable for these sources. No fallback result was saved.')
+        from render_model_preparation import ready_for_processing
+        with ready_for_processing('rf',api['app'].config):
+            try:
+                result,confidence,raw=api['nlp_predict'](
+                    evidence.inference_items(api['parse_items'](pr['items']),'PR'),
+                    evidence.inference_items(api['parse_items'](po['items']),'PO'))
+                if raw.get('trained_model_used') is not True or result not in ('Acceptable','Needs Review','Needs Recanvass','Reject'):
+                    raise RuntimeError('Trained model result required')
+                if isinstance(confidence,bool) or not math.isfinite(float(confidence)) or not 0<=float(confidence)<=100:
+                    raise RuntimeError('Invalid model confidence')
+                technical=comparison(api,pr,po,semantic=True)
+                metadata=raw.get('model_metadata') or {}
+                metadata_hash=hashlib.sha256(json.dumps(metadata,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
+                artifact_hashes={}
+                if api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
+                    import fasttext_nlp_runtime
+                    from nlp_runtime_selection import model_root
+                    for kind,path in fasttext_nlp_runtime.required_paths(model_root(api['app'].config,api['NLP_FASTTEXT_DIR'])).items():
+                        artifact_hashes[kind]=hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            except Exception:
+                abort(503,description='Model verification is unavailable for these sources. No fallback result was saved.')
         model_version=(str(metadata.get('model_version') or metadata.get('feature_schema') or raw.get('runtime') or raw.get('model'))
             +':manifest='+metadata_hash[:16]+':artifacts='+hashlib.sha256(json.dumps(artifact_hashes,sort_keys=True).encode()).hexdigest()[:16])[:200]
         details={key:raw[key] for key in ('model','architecture','runtime','decision_mode','trained_status_label',
@@ -1267,7 +1269,8 @@ def upload_aoq(api):
                         else url_for('aoq',draft_id=str(row['id'])))
     row=api['q'](lookup,(durable._uid(),pr_id,digest),one=True)
     if row:return existing_response(row)
-    with extraction_path(content,extension) as path:
+    from render_model_preparation import ready_for_processing
+    with ready_for_processing(None,api['app'].config), extraction_path(content,extension) as path:
         document=api['extract_aoq_document'](path)
         from aoq_workspace import validate_document
         try:validate_document(document)
