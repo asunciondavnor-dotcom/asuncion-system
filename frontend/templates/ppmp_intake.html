@@ -46,12 +46,13 @@
 {% for item in items %}
 {% set approved=item.confidence.get('_item_approval') %}
 {% set verified=item.confidence.get('_intake_verified') %}
+{% set quantity_review=(item.confidence.get('_source_evidence') or {}).get('quantity_review') %}
 {% set title=item.fields.get('Item Name') or 'Item requiring correction' %}
 {% set description=item.fields.get('General Description and Objective of the Project to be Procured') %}
 <tr>
   <td><strong>{{item.source_number or loop.index+(page-1)*20}}</strong><small class="muted">{{item.temp_code}}</small></td>
   <td><strong>{{title}}</strong>{% if description and description!=title %}<div>{{description}}</div>{% endif %}</td>
-  <td>{{item.fields.get('Quantity','')}} {{item.fields.get('Unit','')}}</td>
+  <td>{% if not verified and not approved and quantity_review %}<span class="badge warn">Verify quantity and unit</span>{% elif item.fields.get('Quantity') or item.fields.get('Unit') %}{{item.fields.get('Quantity','')}} {{item.fields.get('Unit','')}}{% else %}<span class="muted">Not established</span>{% endif %}</td>
   <td class="numeric">{{item.fields.get('Estimated Unit Cost','')|money if item.fields.get('Estimated Unit Cost','')!='' else 'Not established'}}</td>
   <td class="numeric">{{item.fields.get('Estimated Budget Allocation (Php)','')|money if item.fields.get('Estimated Budget Allocation (Php)','')!='' else 'Not established'}}</td>
   <td>{{'Needs Classification' if item.status=='CATEGORY_REVIEW' else item.ppmp_category}}</td>
