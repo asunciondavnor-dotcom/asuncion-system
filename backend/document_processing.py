@@ -14,7 +14,7 @@ import server_sessions_v0_1_0 as sessions
 
 # v6 also preserves explicit unknown/missing catalog categories over sheet names. Existing runs
 # and drafts stay unchanged; only a separately requested reprocess uses this.
-PARSER_VERSION='ppmp-source-evidence-v6'
+PARSER_VERSION='ppmp-source-evidence-v7'
 
 
 @contextmanager

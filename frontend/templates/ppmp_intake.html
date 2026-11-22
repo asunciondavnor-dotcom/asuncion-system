@@ -83,6 +83,7 @@
     <form method="dialog"><button type="submit" class="btn small" autofocus>Close</button></form>
   </header>
   <div class="item-review-body">
+    {% if not verified and not approved and evidence.get('quantity_review') %}<p class="notice">{{evidence.quantity_review}}</p>{% endif %}
     {% if can_approve or (verified and can_edit) %}
     <dl class="item-review-values">
       <div><dt>Category</dt><dd>{{item.ppmp_category}}</dd></div>
@@ -118,6 +119,7 @@
     <details class="item-review-evidence"><summary>Original item evidence</summary>
       {% if evidence.get('reference_row') %}<p>Excel row {{evidence.reference_row}}. On hand {{evidence.on_hand}} {{evidence.source_unit}}. Historical value {{evidence.historical_value}}.</p>{% endif %}
       <pre class="raw-ocr-pre">{{evidence.get('text','No aligned source text captured.') }}</pre>
+      {% if evidence.get('alternate_reading') %}<p>Second OCR reading</p><pre class="raw-ocr-pre">{{evidence.alternate_reading}}</pre>{% endif %}
     </details>
     {% if item.confidence.get('_review_history') %}
     <details class="item-review-evidence"><summary>Correction history</summary><ul>

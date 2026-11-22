@@ -29,7 +29,40 @@ WORKBOOK_ALIASES = {
     'unit of measure': 'unit', 'uom': 'unit', 'unit price': 'unit cost',
     'ppmp category': 'category', 'source category': 'category',
     'estimated budget allocation (php)': 'estimated budget',
+    'estimated unit cost': 'unit cost', 'u/m': 'unit',
+    'general description and objective of the project to be procured': 'description',
+    'type of the project to be procured': 'project type',
 }
+WORKBOOK_PLANNING_COLUMNS = (
+    'Quantity and Size of the Project to be Procured', 'Recommended Mode of Procurement',
+    'Pre-Procurement Conference Applicable (Yes/No)', 'Start of Procurement Activity',
+    'End of Procurement Activity', 'Expected Delivery/Implementation Period', 'Source of Funds',
+    'Attached Supporting Documents', 'Remarks',
+)
+PHOTO_ITEM = re.compile(r'^\W*(?P<quantity>\d+)\s*(?P<unit>btls?|btis|bts|bils|bls|pcs?|pes|rolls?|sets?|seis|lengths?)\b[.,\s]+(?P<name>\S.*)',re.I)
+PHOTO_UNITS = dict.fromkeys(('btl','btls','btis','bts','bils','bls'),'bottles')
+PHOTO_UNITS.update(pc='pcs',pes='pcs',roll='rolls',sets='sets',set='sets',seis='sets',length='lengths')
+
+
+def photographed_item_fields(item,line, alternate):
+    """Split the numbered item column without promoting ambiguous quantities."""
+    from difflib import SequenceMatcher
+    from procurement_item_contract import SPECIFICATION
+    first=PHOTO_ITEM.match(line)
+    if first is None:return
+    fields=item['fields']
+    fields['Item Name']=first['name'].strip()
+    fields[SPECIFICATION]=line
+    unit=PHOTO_UNITS.get(first['unit'].lower(),first['unit'].lower())
+    second=PHOTO_ITEM.match(alternate)
+    if (unit!='lengths' and second and first['quantity']==second['quantity']
+            and unit==PHOTO_UNITS.get(second['unit'].lower(),second['unit'].lower())
+            and SequenceMatcher(None,first['name'].casefold(),second['name'].casefold()).ratio()>=.60):
+        fields.update(Quantity=first['quantity'],Unit=unit)
+    else:
+        evidence=item['field_confidence']['_source_evidence']
+        evidence['quantity_review']='Confirm the quantity and unit against the original.'
+        if alternate and alternate!=line:evidence['alternate_reading']=alternate
 
 
 def review_item(text, evidence):
@@ -105,19 +138,46 @@ def photographed_ppmp_items(path, deadline=None):
             right=round(b[0]+(c[0]-b[0])*.76)
             top=b[1]+max(1,b[2]//4)
             bottom=min(image.height,top+round(image.height*.36))
-            pixels=np.array(ImageOps.autocontrast(image.crop((left,top,right,bottom))))
-            if pixels.size==0:return []
-            mask=pixels<np.percentile(pixels,30)
-            pixels[ndimage.binary_opening(mask,structure=np.ones((1,19))) |
-                   ndimage.binary_opening(mask,structure=np.ones((25,1)))]=255
-            crop=ImageOps.expand(Image.fromarray(pixels).resize((pixels.shape[1]*2,pixels.shape[0]*2)),15,'white')
+            def prepared_crop(box):
+                pixels=np.array(ImageOps.autocontrast(image.crop(box)))
+                mask=pixels<np.percentile(pixels,30)
+                pixels[ndimage.binary_opening(mask,structure=np.ones((1,19))) |
+                       ndimage.binary_opening(mask,structure=np.ones((25,1)))]=255
+                return ImageOps.expand(Image.fromarray(pixels).resize((pixels.shape[1]*2,pixels.shape[0]*2)),15,'white')
+            if right-left<30 or bottom-top<30:return []
+            crop=prepared_crop((left,top,right,bottom))
             lines=pytesseract.image_to_string(crop,config='--oem 3 --psm 6',timeout=timeout(15)).splitlines()
+            checks=[]
+            try:
+                check_crop=prepared_crop((max(0,left-2),top+1,right-5,bottom-10))
+                checks=pytesseract.image_to_string(check_crop,config='--oem 3 --psm 6',
+                                                     timeout=timeout(13)).splitlines()
+            except (RuntimeError,TimeoutError):
+                pass
+    def item_lines(values):
+        return [line.strip(' |[]_~\t') for line in values if re.search(
+            r'\b(?:btls?|btis|bts|bils|bls|pcs?|pes|rolls?|sets?|lengths?)\b|^\W*\d+\s*seis\b',line,re.I)]
+    lines,checks=item_lines(lines),item_lines(checks)
     candidates=[]
-    for line in lines:
-        line=line.strip(' |[]_~\t')
-        if re.fullmatch(r'.*\b(?:btls?|btis|bils|bls|pcs?|pes|rolls?|sets?|lengths?)\b.*',line,re.I) or re.match(r'^\d+\s*(?:seis|sets)\b',line,re.I):
-            candidates.append(review_item(line,dict(source='Photographed PPMP item column',page=1,row=len(candidates)+1,
-                                                    bbox=[left,top,right,bottom])))
+    from difflib import SequenceMatcher
+    next_check=0
+    for index,line in enumerate(lines):
+        item=review_item(line,dict(source='Photographed PPMP item column',page=1,row=index+1,
+                                   bbox=[left,top,right,bottom]))
+        alternate=''
+        primary=PHOTO_ITEM.match(line)
+        if primary:
+            scores=[]
+            for offset,check in enumerate(checks[next_check:next_check+3],next_check):
+                reading=PHOTO_ITEM.match(check)
+                if reading:
+                    score=SequenceMatcher(None,primary['name'].casefold(),reading['name'].casefold()).ratio()
+                    if score>=.72:scores.append((score,-offset,check))
+            if scores:
+                _,negative_offset,alternate=max(scores)
+                next_check=1-negative_offset
+        photographed_item_fields(item,line,alternate)
+        candidates.append(item)
     return candidates
 
 
@@ -133,7 +193,8 @@ def workbook_items(document):
                 break
         else:
             continue
-        positions = {key: headers.index(key.casefold()) for key in ITEM_COLUMNS
+        columns = {**ITEM_COLUMNS,**{label:label for label in WORKBOOK_PLANNING_COLUMNS}}
+        positions = {key: headers.index(key.casefold()) for key in columns
                      if headers.count(key.casefold()) == 1}
         if not {'Item Name', 'Quantity'} <= positions.keys():
             continue
@@ -142,11 +203,11 @@ def workbook_items(document):
             cell_evidence[cell.get('worksheet_row')].append(cell)
         numbers = table.get('row_numbers') or range(1, len(rows)+1)
         for offset, row in enumerate(rows[index + 1:], index + 1):
-            values = {key: str(row[pos] if pos < len(row) else '').strip()
+            values = {key: str(row[pos] if pos < len(row) and row[pos] is not None else '').strip()
                       for key, pos in positions.items()}
             if not values['Item Name'] or not any(values.get(key) for key in ('Quantity', 'Unit', 'Unit Cost')):
                 continue
-            fields = {label: values[key] for key, label in ITEM_COLUMNS.items() if label and key in values}
+            fields = {label: values[key] for key, label in columns.items() if label and key in values}
             if values['Item Name'].casefold() == 'item name' and values['Quantity'].casefold() == 'quantity':
                 continue
             line = numbers[offset]
