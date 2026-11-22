@@ -35,6 +35,7 @@
       throw error;
     }
     const fresh=new DOMParser().parseFromString(await response.text(),'text/html');
+    if(document.querySelector('dialog[data-item-review][open]'))return false;
     let applied=true;
     // Explicit read-only workspaces and timelines can change shape. Editors,
     // search/filter forms and focused content remain in the current document.
@@ -52,7 +53,10 @@
       if(replacement&&!node.closest('form'))node.textContent=replacement.textContent;
     });
     const editors=document.querySelector('[data-live-editors]');
-    if(editors){
+    const freshDialogs=fresh.querySelectorAll('[data-live-editors] > dialog[data-item-review]');
+    if(editors?.matches('[data-item-dialogs]')){
+      editors.replaceChildren(...[...freshDialogs].map(dialog=>dialog.cloneNode(true)));
+    }else if(editors){
       // New drafts need working review anchors. Existing editors keep their
       // values and revisions; a stale save is rejected by the server.
       fresh.querySelectorAll('[data-live-editors] > details[id]').forEach(editor=>{

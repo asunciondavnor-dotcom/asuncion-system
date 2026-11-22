@@ -8,9 +8,9 @@
     if(notice){notice.hidden=false;notice.dataset.category='info';notice.textContent='Processing the document request. Wait for the saved extraction result before continuing.';}
   });
   document.addEventListener('click',event=>{
-    const link=event.target.closest('a[href^="#edit-"]');
-    if(!link)return;
-    const editor=document.getElementById(link.hash.slice(1));
-    if(editor){editor.open=true;editor.querySelector('select,textarea,input')?.focus();}
+    const button=event.target.closest('[data-item-dialog]');
+    if(!button)return;
+    const dialog=document.getElementById(button.dataset.itemDialog);
+    if(dialog && !dialog.open)dialog.showModal();
   });
 })();
