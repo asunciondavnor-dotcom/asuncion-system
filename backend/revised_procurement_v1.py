@@ -693,7 +693,8 @@ def nlp_page(api):
        (select n.pr_id from nlp n where n.po_id=p.id and n.workflow_version=2 order by n.id desc limit 1) saved_pr_id
        from po p join aoq a on a.id=p.aoq_id where p.status='Approved' and a.status='Approved' order by p.id desc""")
     rows=api['paged_q']("""select n.id,n.no,n.pr_id,n.po_id,n.result,n.status,n.technical_status,n.workflow_version,n.details,n.pr_items_hash,n.po_items_hash,n.created_at,n.reviewed_at,n.reviewed_by,
-       p.no po_no,p.items po_items,p.supplier,r.no pr_no,r.items pr_items,r.office,a.no aoq_no from nlp n join po p on p.id=n.po_id
+       p.no po_no,p.items po_items,p.supplier,r.no pr_no,r.items pr_items,r.office,a.no aoq_no,
+       p.pr_id po_pr_id,a.pr_id aoq_pr_id from nlp n join po p on p.id=n.po_id
        left join aoq a on a.id=p.aoq_id left join pr r on r.id=coalesce(n.pr_id,p.pr_id,a.pr_id) order by n.id desc""")
     pr=po=None;technical=None;selected={}
     if request.args.get('verification_id'):
@@ -714,7 +715,7 @@ def nlp_page(api):
         pr_items=api['parse_items'](pr['items']) if pr else [],po_items=api['parse_items'](po['items']) if po else [],
         model_state=api['trained_nlp_model_status'](),verification=selected,
         final_contract_ready=final_contract_ready(api),
-        record_displays={r['id']:verification_display(dict(r),stale=(r.get('workflow_version') in (1,2) and
+        record_displays={r['id']:record_verification_display(api,dict(r),stale=(r.get('workflow_version') in (1,2) and
             (r.get('pr_items_hash')!=evidence.fingerprint(r.get('pr_items')) or
              r.get('po_items_hash')!=evidence.fingerprint(r.get('po_items'))))) for r in rows})
 
@@ -880,14 +881,14 @@ def discrepancy_band(value):
     return 'Match' if value<=10 else 'Needs Review' if value<=50 else 'Mismatch'
 
 
-def verification_display(row,pr_items=(),po_items=(),stale=False):
+def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_comparison=None):
     """Presentation of saved facts only; never derive a score from confidence."""
     details=row.get('details') or {}
     if isinstance(details,str):
         try:details=json.loads(details)
         except (ValueError,TypeError):details={}
     if not isinstance(details,dict):details={}
-    saved=details.get('technical_comparison')
+    saved=current_comparison if current_comparison is not None else details.get('technical_comparison')
     saved=saved if isinstance(saved,dict) else {}
     incidence=discrepancy_incidence(saved)
     def percentage(value):
@@ -946,7 +947,7 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
             legacy_states.append(None)
             findings.append(dict(detail='Item correspondence',requested=line.get('pr_reference'),offered=line.get('po_reference'),status='Needs Review',percentage='Not calculated'))
     mismatch=any(s=='MISMATCH' for s in legacy_states)
-    clean=(row.get('technical_status')=='MATCH' and saved.get('technical_status')=='MATCH'
+    clean=((current_comparison is not None or row.get('technical_status')=='MATCH') and saved.get('technical_status')=='MATCH'
            and bool(legacy_states) and all(s=='MATCH' for s in legacy_states)
            and bool(pairs) and legacy_pairs_match
            and not saved.get('missing_or_unresolved_pr_items') and not saved.get('extra_or_unallocated_items'))
@@ -990,6 +991,32 @@ def verification_display(row,pr_items=(),po_items=(),stale=False):
         percentage_final=value is not None,review_coverage=coverage,pending_checks=pending_checks,pending_items=pending_items,
         score_band=discrepancy_band(value),
         findings=findings,pairs=pairs,explanation=explanation)
+
+
+def record_verification_display(api,row,left=None,right=None,*,stale=False):
+    """Compare current linked sources for historical approvals without rewriting history."""
+    display=verification_display(row,left or (),right or (),stale=stale)
+    if row.get('status')!='Approved' or row.get('workflow_version') in (1,2) or display['percentage']!='Not calculated':
+        return display
+    links={row.get(key) for key in ('pr_id','po_pr_id','aoq_pr_id') if row.get(key) is not None}
+    if len(links)==1 and all(len(row.get(key) or '')<=64_000 for key in ('pr_items','po_items')):
+        left=left if left is not None else api['parse_items'](row.get('pr_items'))
+        right=right if right is not None else api['parse_items'](row.get('po_items'))
+        if isinstance(left,list) and isinstance(right,list) and 0<len(left)<=20 and 0<len(right)<=20:
+            try:
+                current=evidence.compare(left,right)
+            except (ValueError,TypeError,AttributeError):
+                pass
+            else:
+                preview=verification_display(row,left,right,current_comparison=current)
+                if preview['percentage']!='Not calculated':
+                    preview['explanation']='Calculated from the currently linked PR and PO. '+preview['explanation']
+                    preview['percentage_basis']='Current linked sources. '+preview['percentage_basis']
+                    preview['source_note']='Current linked sources'
+                    return preview
+    display['status']='Historical evidence unavailable'
+    display['explanation']='A source-bound discrepancy percentage could not be established for this historical approval.'
+    return display
 
 def verification_context(api,row):
     pr,po=source_pair(api,row['pr_id'],row['po_id'])
@@ -1037,7 +1064,7 @@ def historical_review(api,row):
     left=api['parse_items'](row.get('pr_items') or '[]')
     right=api['parse_items'](row.get('po_items') or '[]')
     view=dict(row=row,pr={'no':row.get('pr_no') or 'Not recorded'},po={'no':row.get('po_no') or 'Not recorded'},
-        pr_items=left,po_items=right,display=verification_display(row,left,right),stale=True,
+        pr_items=left,po_items=right,display=record_verification_display(api,row,left,right),stale=True,
         comparison={'rows':[],'technical_status':'NEEDS_REVIEW'},score_ready=False,
         can_review_relationship=False,review_evidence_current=False,inspection_ready=False)
     return render_template('revised_nlp.html',active='nlp',title='PR-PO Verification',historical=True,

@@ -3622,7 +3622,7 @@ def nlp_pricing_advisory(record_id):
 @app.route('/nlp/<int:id>/view')
 def nlp_review(id):
     row = q(f'''select n.*, p.no po_no, p.items po_items, p.supplier,
-                      aq.no aoq_no, r.no pr_no, r.items pr_items
+                      aq.no aoq_no, r.no pr_no, r.items pr_items,p.pr_id po_pr_id,aq.pr_id aoq_pr_id
                from nlp n
                join po p on p.id=n.po_id
                left join aoq aq on aq.id=p.aoq_id
