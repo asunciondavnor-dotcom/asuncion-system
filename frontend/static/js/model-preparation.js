@@ -51,7 +51,13 @@
     return element;
   }
 
+  function nativeWorkbook(form) {
+    const file = form.querySelector('input[name="ocr_file"]')?.files?.[0];
+    return file && /\.xls[xm]$/i.test(file.name);
+  }
+
   function prepareAhead(form) {
+    if (nativeWorkbook(form) || form.querySelector('input[name="ocr_file"]:not([type="hidden"])')?.files?.length === 0) return;
     if (form.dataset.modelPreparationAction) {
       const order = selectedOrder(form);
       if (!order?.value || order.dataset.savedPrId) return;
@@ -79,6 +85,7 @@
   document.addEventListener('submit', async event => {
     const form = event.target, button = event.submitter;
     if (!form.matches?.(selector) || replaying.has(form) || event.defaultPrevented) return;
+    if (nativeWorkbook(form)) return;
     if (form.dataset.modelPreparationAction && button?.value !== form.dataset.modelPreparationAction) return;
     if (form.dataset.modelPreparationAction && selectedOrder(form)?.dataset.savedPrId) return;
     event.preventDefault();

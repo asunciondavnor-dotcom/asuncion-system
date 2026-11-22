@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections import defaultdict
 from io import BytesIO
 import time
 
@@ -12,6 +13,62 @@ import document_processing as processing
 from private_document_uploads import validate, extraction_path
 
 CATEGORIES=('DBM','NON-DBM','LIB')
+WORKBOOKS = {'.xlsx', '.xlsm'}
+ITEM_COLUMNS = {
+    'Item Name': 'Item Name',
+    'Description': 'General Description and Objective of the Project to be Procured',
+    'Quantity': 'Quantity',
+    'Unit': 'Unit',
+    'Unit Cost': 'Estimated Unit Cost',
+    'Estimated Budget': 'Estimated Budget Allocation (Php)',
+    'Project Type': 'Type of the Project to be Procured',
+    'Category': None,
+}
+WORKBOOK_ALIASES = {
+    'item': 'item name', 'particulars': 'item name', 'qty': 'quantity',
+    'unit of measure': 'unit', 'uom': 'unit', 'unit price': 'unit cost',
+    'ppmp category': 'category', 'source category': 'category',
+    'estimated budget allocation (php)': 'estimated budget',
+}
+
+
+def workbook_items(document):
+    """Read explicit item columns, retaining the original worksheet and row."""
+    items = []
+    for table in document.get('tables', []):
+        rows = table['rows']
+        for index, row in enumerate(rows):
+            headers = [str(value).strip().casefold() for value in row]
+            headers = [WORKBOOK_ALIASES.get(header,header) for header in headers]
+            if 'item name' in headers and 'quantity' in headers:
+                break
+        else:
+            continue
+        positions = {key: headers.index(key.casefold()) for key in ITEM_COLUMNS
+                     if headers.count(key.casefold()) == 1}
+        if not {'Item Name', 'Quantity'} <= positions.keys():
+            continue
+        cell_evidence = defaultdict(list)
+        for cell in table.get('cells', []):
+            cell_evidence[cell.get('worksheet_row')].append(cell)
+        numbers = table.get('row_numbers') or range(1, len(rows)+1)
+        for offset, row in enumerate(rows[index + 1:], index + 1):
+            values = {key: str(row[pos] if pos < len(row) else '').strip()
+                      for key, pos in positions.items()}
+            if not values['Item Name'] or not any(values.get(key) for key in ('Quantity', 'Unit', 'Unit Cost')):
+                continue
+            fields = {label: values[key] for key, label in ITEM_COLUMNS.items() if label and key in values}
+            if values['Item Name'].casefold() == 'item name' and values['Quantity'].casefold() == 'quantity':
+                continue
+            line = numbers[offset]
+            evidence = dict(worksheet=table.get('worksheet'), row=line, headers=[str(v) for v in rows[index]],
+                            cells=row, text=' | '.join(str(v) for v in row),
+                            cell_evidence=cell_evidence[line])
+            items.append(dict(fields=fields, field_confidence={'_source_evidence': evidence},
+                              native_category=category(values.get('Category'))))
+            if len(items) > 200:
+                abort(400, description='Review at most 200 items per upload. Split the workbook into smaller files.')
+    return items
 
 
 def category(value):
@@ -22,6 +79,8 @@ def category(value):
 
 def suggest_category(row):
     """Use explicit row, worksheet or scoped document evidence; never item-name guesses."""
+    if row.get('native_category'):
+        return row['native_category'], 'explicit workbook category'
     confidence=row.get('field_confidence') or {}
     evidence=confidence.get('_source_evidence') or {}
     candidates=[]
@@ -92,7 +151,7 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
     def destination(sid):
         return url_for('ppmp_type',ptype=return_category,ocr_source=str(sid)) if return_category else url_for('ppmp_intake_review',sid=str(sid))
     if len(rows)>200:abort(400,description='Review at most 200 items per upload.')
-    if not (structured.get('model') or {}).get('active'):
+    if ext not in WORKBOOKS and not (structured.get('model') or {}).get('active'):
         abort(503,description='The semantic mapper is unavailable. No extraction was saved.')
     digest=hashlib.sha256(content).hexdigest()
     if source_id is None:
@@ -136,6 +195,7 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
         for key,row in identified:
             fields=dict(row.get('fields') or {})
             confidence=dict(row.get('field_confidence') or {})
+            confidence['_intake_approval_required']=True
             confidence['_original_fields']=dict(fields)
             from offline_ocr_mapper import KEY_TO_LABEL
             project_label=KEY_TO_LABEL['project_type']
@@ -187,12 +247,17 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
 
 
 def upload(api):
-    from nlp_runtime_selection import require_available
-    require_available(api['app'].config)
     g.document_stage='validation'
     name,ext,content=validate(request.files.get('ocr_file'))
+    return capture_upload(api,name,ext,content)
+
+
+def capture_upload(api,name,ext,content):
+    from nlp_runtime_selection import require_available
+    if ext not in WORKBOOKS:
+        require_available(api['app'].config)
     from render_model_preparation import ready_for_processing
-    with ready_for_processing('semantic',api['app'].config):
+    with ready_for_processing(None if ext in WORKBOOKS else 'semantic',api['app'].config):
         sid,run_id=processing.capture(api,name,ext,content)
         if run_id is None:
             flash('This document is already saved. Existing corrections were preserved. Use Reprocess Extraction when needed.','info')
@@ -206,7 +271,10 @@ def extract_saved(api,sid,run_id,name,ext,content):
             g.document_stage='extraction';started=time.perf_counter()
             extracted=api['extract_aoq_document'](path);native_seconds=time.perf_counter()-started
             g.document_stage='mapping';started=time.perf_counter()
-            structured=api['map_ppmp_ocr_document'](extracted);mapping_seconds=time.perf_counter()-started
+            native=workbook_items(extracted) if ext in WORKBOOKS else None
+            structured=(dict(rows=native,warnings=extracted.get('warnings',[]),parser='explicit-excel-columns')
+                        if native is not None else api['map_ppmp_ocr_document'](extracted))
+            mapping_seconds=time.perf_counter()-started
         return save_extraction(api,name,ext,content,extracted,structured,source_id=sid,run_id=run_id,
                                timings=dict(extraction_seconds=native_seconds,mapping_seconds=mapping_seconds))
     except Exception:
@@ -215,10 +283,14 @@ def extract_saved(api,sid,run_id,name,ext,content):
 
 
 def reprocess(api,sid):
-    from nlp_runtime_selection import require_available
-    require_available(api['app'].config)
+    original=api['q']("select extension from psms_documents.sources where id=? and owner_id=? and kind='ppmp'",
+                      (str(sid),durable._uid()),one=True)
+    if not original:abort(404)
+    if original['extension'] not in WORKBOOKS:
+        from nlp_runtime_selection import require_available
+        require_available(api['app'].config)
     from render_model_preparation import ready_for_processing
-    with ready_for_processing('semantic',api['app'].config):
+    with ready_for_processing(None if original['extension'] in WORKBOOKS else 'semantic',api['app'].config):
         source,run_id=processing.begin_existing(api,str(sid))
         if run_id is None:
             flash('This parser already completed extraction. Existing drafts and corrections were preserved.','info')
@@ -228,27 +300,68 @@ def reprocess(api,sid):
 
 def review(api,sid):
     sid=str(sid)
-    source=api['q']("select id,filename,created_at,owner_id,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp'",(sid,durable._uid()),one=True)
+    admin=api['is_admin']()
+    source=api['q']("select id,filename,extension,created_at,owner_id,extraction from psms_documents.sources where id=? and (owner_id=? or ?) and kind='ppmp'",(sid,durable._uid(),admin),one=True)
     if not source:abort(404)
     page=durable.revision(request.args.get('page','1'))
     if not 1<=page<=10000:abort(400)
     if request.method=='POST':
+        action=request.form.get('action','verify')
+        if action=='approve':
+            if not admin:abort(403)
+            if request.form.get('confirm_approval')!='yes':abort(400)
+            with durable.transaction(api) as (con,uid):
+                draft=con.execute('select * from ppmp_ocr_drafts where id=? and source_id=? for update',
+                                  (durable.revision(request.form.get('draft_id')),sid)).fetchone()
+                if not draft:abort(404)
+                confidence=api['_json_dict'](draft['confidence_json'])
+                if (draft['revision']!=durable.revision(request.form.get('revision')) or draft['converted']
+                        or draft['status']!='REVIEWED' or not draft['reviewed']
+                        or not confidence.get('_intake_verified') or confidence.get('_item_approval')):
+                    abort(409,description='Reopen the latest verified item before approving.')
+                confidence['_item_approval']=dict(by=uid,at=api['now']())
+                con.execute('update ppmp_ocr_drafts set confidence_json=?,updated_at=?,revision=revision+1 where id=?',
+                            (durable.payload(confidence),api['now'](),draft['id']))
+                durable.audit(api,con,'Approved Uploaded Item','PPMP',draft['id'])
+            flash('Official item approved. It is available in its PPMP category.','success')
+            return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
+        if source['owner_id']!=durable._uid():abort(403)
+        if action not in ('verify','add'):abort(400)
         if request.form.get('confirm_category')!='yes':abort(400,description='Confirm the item category before saving.')
         destination=category(request.form.get('category'))
         if not destination:abort(400,description='Choose DBM, NON-DBM or LIB for this item.')
-        did=durable.revision(request.form.get('draft_id'))
-        expected=durable.revision(request.form.get('revision'))
         labels=api['ppmp_review_labels']()
         if any('field_'+str(i) not in request.form for i in range(len(labels))):abort(400)
         fields={label:request.form['field_'+str(i)] for i,label in enumerate(labels)}
         if any(len(value)>5000 for value in fields.values()):abort(400)
         fields=api['normalize_reviewed_ocr_fields'](fields)
+        try:api['validated_ppmp_item_from_review'](fields,destination)
+        except ValueError as error:abort(422,description=str(error))
         with durable.transaction(api) as (con,uid):
+            if action=='add':
+                key=hashlib.sha256(durable.payload(fields).encode()).hexdigest()
+                con.execute('select pg_advisory_xact_lock(hashtextextended(?,0))',('manual-item:'+sid,))
+                if con.execute("""select id from ppmp_ocr_drafts where source_id=? and owner_id=? and
+                    case when confidence_json IS JSON OBJECT then confidence_json::jsonb->>'_manual_identity'=? else false end""",
+                               (sid,uid,key)).fetchone():
+                    abort(409,description='This item is already saved for review.')
+                confidence=dict(_original_fields=fields,_manual_identity=key,_intake_approval_required=True,
+                                _source_evidence=dict(text='Entered by personnel from the saved original.'))
+                did=con.execute('''insert into ppmp_ocr_drafts(upload_token,temp_code,ppmp_category,fields_json,confidence_json,
+                    source_filename,extraction_method,status,reviewed,created_by,created_at,updated_at,owner_id,source_id)
+                    values(?,?,?,?,?,?,?,'NEEDS_REVIEW',false,?,?,?,?,?) returning id''',
+                    (sid,'ITEM-'+uuid.uuid4().hex,destination,durable.payload(fields),durable.payload(confidence),
+                     source['filename'],'Personnel entry',session['username'],api['now'](),api['now'](),uid,sid)).fetchone()['id']
+                durable.audit(api,con,'Added Item From Saved Original','PPMP',did)
+                return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
+            did=durable.revision(request.form.get('draft_id'))
+            expected=durable.revision(request.form.get('revision'))
             row=con.execute('select * from ppmp_ocr_drafts where id=? and source_id=? and owner_id=? for update',(did,sid,uid)).fetchone()
             if not row:abort(404)
             if row['revision']!=expected or row['converted'] or row['status'] in ('CANCELLED','CONVERTED_TO_PPMP'):
                 abort(409,description='This item changed or became official. Reopen its saved review; your submission was not applied.')
             confidence=api['_json_dict'](row['confidence_json'])
+            if confidence.get('_item_approval'):abort(409,description='This official item is already approved.')
             original=confidence.get('_original_fields') or api['_json_dict'](row['fields_json'])
             from procurement_item_contract import decimal_number
             if (decimal_number(fields.get('Quantity'))!=decimal_number(original.get('Quantity')) and
@@ -259,11 +372,11 @@ def review(api,sid):
             confidence.setdefault('_review_history',[]).append(dict(
                 revision=row['revision'],previous_category=row['ppmp_category'],category=destination,
                 by=uid,at=api['now'](),before_fields=api['_json_dict'](row['fields_json']),after_fields=dict(fields)))
-            # Category assignment is not official review or procurement approval.
-            con.execute("update ppmp_ocr_drafts set ppmp_category=?,fields_json=?,confidence_json=?,status='NEEDS_REVIEW',reviewed=false,updated_at=?,revision=revision+1 where id=?",
-                (destination,durable.payload(fields),durable.payload(confidence),api['now'](),did))
-            durable.audit(api,con,'Assigned Reviewed Item Category','PPMP',did)
-        flash('Item corrections and category saved. Complete item review in its category before official creation.','success')
+            confidence.update(_intake_approval_required=True,_intake_verified=True)
+            con.execute("update ppmp_ocr_drafts set ppmp_category=?,fields_json=?,confidence_json=?,status='REVIEWED',reviewed=true,reviewed_by=?,reviewed_at=?,updated_at=?,revision=revision+1 where id=?",
+                (destination,durable.payload(fields),durable.payload(confidence),session['username'],api['now'](),api['now'](),did))
+            durable.audit(api,con,'Verified Uploaded Item','PPMP',did)
+        flash('Item verified and saved for authorized approval.','success')
         return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
     extraction,run=processing.latest(api,sid,source['extraction'])
     source=dict(source,extraction=extraction)
@@ -275,7 +388,7 @@ def review(api,sid):
         or any(len(request.args.getlist(key))>1 for key in ('sheet','category','q','sort','page'))):abort(400)
     sorts={'source':'id','name':"lower(fields_json::jsonb->>'Item Name'),id",'name_desc':"lower(fields_json::jsonb->>'Item Name') desc,id",'status':'status,id','newest':'id desc'}
     if sort not in sorts:abort(400)
-    source_where='source_id=? and owner_id=?';source_params=[sid,durable._uid()]
+    source_where='source_id=? and owner_id=?';source_params=[sid,source['owner_id']]
     # A historical malformed/absent evidence payload has no known worksheet;
     # it must not prevent opening All worksheets or be rewritten here. PG17.
     sheet_expression="(case when confidence_json IS JSON OBJECT then confidence_json::jsonb #>> '{_source_evidence,worksheet}' end)"
@@ -320,7 +433,8 @@ def review(api,sid):
 
 
 def source_file(api,sid):
-    row=api['q']("select content,extension from psms_documents.sources where id=? and owner_id=? and kind='ppmp'",(str(sid),durable._uid()),one=True)
+    row=api['q']("select content,extension from psms_documents.sources where id=? and (owner_id=? or ?) and kind='ppmp'",
+                 (str(sid),durable._uid(),api['is_admin']()),one=True)
     if not row:abort(404)
     response=send_file(BytesIO(bytes(row['content'])),as_attachment=True,download_name='source-document'+row['extension'])
     response.headers.update({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"})

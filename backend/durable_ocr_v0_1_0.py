@@ -258,7 +258,8 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
         g.psms_draft_pagination=dict(page=page,total=0,has_next=False)
         return []
     if state is _STATE_UNSET:state=ppmp_state(api,ptype)
-    where="owner_id=? and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
+    approval="(case when confidence_json IS JSON OBJECT then confidence_json::jsonb else '{}'::jsonb end)"
+    where="(owner_id=? or "+approval+"->'_item_approval' is not null) and ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')"
     params=[_uid(),ptype]
     if state and state.get('classification_pending_count',0)>0:
         where="owner_id=? and ((ppmp_category=? and status in ('NEEDS_REVIEW','REVIEWED')) or (ppmp_category='UNASSIGNED' and status='CATEGORY_REVIEW' and source_id=?))"
@@ -275,6 +276,7 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
                  'Quantity and Size of the Project to be Procured','Quantity','Unit','Estimated Unit Cost','Item Number')
         where+=" and strpos(lower(concat_ws(' ',temp_code,"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
         params.append(filters['item_q'])
+    where+=" and ("+approval+"->'_intake_approval_required' is null or "+approval+"->'_item_approval' is not null)"
     count=api['q']('select count(*) total from ppmp_ocr_drafts where '+where,params,one=True)
     if not count or type(count.get('total')) is not int or count['total']<0:
         abort(503,description='The matching draft count could not be confirmed. No items were changed.')
@@ -283,10 +285,21 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
         order="lower(coalesce(nullif("+fields+"->>'Item Name',''),"+fields+"->>'General Description and Objective of the Project to be Procured','')) "+('desc' if filters['item_sort']=='name_desc' else 'asc')+',id'
     g.psms_draft_pagination=dict(page=page,total=count['total'],has_next=page*200<count['total'])
     rows=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+order+' limit 200 offset ?',(*params,(page-1)*200))
-    return [api['_ocr_draft_to_ui'](row) for row in rows]
+    items = [api['_ocr_draft_to_ui'](row) for row in rows]
+    for item in items:
+        item['official_item'] = bool(item['field_confidence'].get('_item_approval'))
+        if item['owner_id'] != _uid():
+            for key in ('fields_json','confidence_json','raw_ocr_text','source_filename','field_confidence',
+                        'source_id','upload_token','created_by','reviewed_by'):
+                item.pop(key,None)
+    return items
 
 def _ppmp_locked(con,uid,ptype,temp_id,allow_category_review=False):
     row=con.execute('select * from ppmp_ocr_drafts where temp_code=? and ppmp_category=? and owner_id=? for update',(temp_id,ptype,uid)).fetchone()
+    if not row and getattr(g,'document_stage',None)=='creation_draft_lock':
+        row=con.execute("""select * from ppmp_ocr_drafts where temp_code=? and ppmp_category=?
+            and case when confidence_json IS JSON OBJECT then confidence_json::jsonb->'_item_approval' is not null else false end
+            for update""",(temp_id,ptype)).fetchone()
     if not row and isinstance(temp_id,str) and re.fullmatch(r'OCR-TEMP-[0-9]{1,20}',temp_id):
         # Older rows can have no stored code. Resolve exactly the fallback
         # identifier already displayed by _ocr_draft_to_ui, with the same
@@ -302,6 +315,13 @@ def _ppmp_locked(con,uid,ptype,temp_id,allow_category_review=False):
         abort(404)
     if row['status']=='CATEGORY_REVIEW' and not allow_category_review:
         abort(409,description='Confirm the item category in Document Upload and Review before reviewing or saving this draft.')
+    try:confidence=json.loads(row['confidence_json'] or '{}') if isinstance(row['confidence_json'],str) else row['confidence_json']
+    except ValueError:confidence={}
+    if not isinstance(confidence,dict):confidence={}
+    if confidence.get('_intake_approval_required'):
+        if (getattr(g,'document_stage',None)!='creation_draft_lock'
+                or not confidence.get('_item_approval')):
+            abort(409,description='Review and approve uploaded items in Upload Items before selecting them for PPMP.')
     return row
 
 
@@ -401,7 +421,9 @@ def ppmp_post(api,ptype):
         state=ppmp_state(api,ptype)
         if not state:abort(404)
         with transaction(api) as (con,uid):
-            con.execute("update ppmp_ocr_drafts set status='CANCELLED',revision=revision+1 where owner_id=? and ppmp_category=? and source_id=? and status not in ('CONVERTED_TO_PPMP','CANCELLED')",(uid,ptype,state['source_id']))
+            con.execute("""update ppmp_ocr_drafts set status='CANCELLED',revision=revision+1
+                where owner_id=? and ppmp_category=? and source_id=? and status not in ('CONVERTED_TO_PPMP','CANCELLED')
+                and case when confidence_json IS JSON OBJECT then confidence_json::jsonb->'_intake_approval_required' is null else true end""",(uid,ptype,state['source_id']))
             audit(api,con,'Cancelled Own OCR Drafts','PPMP',ptype)
         session.pop('ppmp_ocr_source',None)
         flash('Unconverted drafts for this source were cancelled. Other uploads and official records were preserved.')

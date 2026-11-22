@@ -2136,16 +2136,39 @@ def inference_preparation(kind):
 
 @app.route('/ppmp/<ptype>/upload_ocr', methods=['POST'])
 def ppmp_ocr_upload(ptype):
-    return durable_ocr.protected(durable_ocr.ppmp_upload, globals(), ptype)
+    if ptype not in PPMP_DESTINATIONS:abort(404)
+    return durable_ocr.protected(item_intake.upload,globals())
 
 
 @app.route('/ppmp/intake',methods=['GET','POST'])
 def ppmp_intake():
     if request.method=='POST':
         return durable_ocr.protected(item_intake.upload,globals())
-    return render_template('ppmp_intake.html',active='ppmp',title='PPMP Document Upload',
+    pending = q("""select distinct s.id,s.filename from psms_documents.sources s join ppmp_ocr_drafts d on d.source_id=s.id
+        where s.kind='ppmp' and d.status='REVIEWED' and not d.converted
+        and case when d.confidence_json IS JSON OBJECT then
+            d.confidence_json::jsonb->'_intake_verified' is not null and d.confidence_json::jsonb->'_item_approval' is null else false end
+        order by s.filename,s.id limit 100""") if is_admin() else []
+    return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',pending=pending,
                            source=None,items=[],labels=ppmp_review_labels(),categories=item_intake.CATEGORIES,
                            history=document_history.listing(globals(),'ppmp'))
+
+
+@app.get('/items/sample.xlsx')
+def item_upload_sample():
+    from io import BytesIO
+    from flask import send_file
+    from openpyxl import Workbook
+    workbook=Workbook()
+    sheet=workbook.active
+    sheet.title='NON-DBM'
+    sheet.append(list(item_intake.ITEM_COLUMNS))
+    sheet.append(['Copy paper','A4 white paper, 80 gsm',2,'ream',250,500,'Goods','NON-DBM'])
+    output=BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(output,as_attachment=True,download_name='asuncion-item-upload-sample.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/ppmp/intake/<uuid:sid>',methods=['GET','POST'])
@@ -2190,7 +2213,7 @@ def ppmp_ocr_duplicate_check(ptype):
 
 @app.route('/ppmp/<ptype>/reprocess_ocr', methods=['POST'])
 def ppmp_ocr_reprocess(ptype):
-    return durable_ocr.protected(durable_ocr.ppmp_upload, globals(), ptype, True)
+    return ppmp_ocr_upload(ptype)
 
 @app.before_request
 def ensure():

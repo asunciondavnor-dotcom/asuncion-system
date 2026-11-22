@@ -26,6 +26,7 @@
   <div class="brand"><img class="seal" src="{{url_for('static',filename='images/asuncion-seal.png')}}" alt="Municipality of Asuncion official seal"><div><strong>Municipality of<br>Asuncion</strong><small>Supply &amp; Property<br>Management</small></div></div>
   <button class="nav-close icon-button" id="navClose" aria-label="Close navigation">{{icon('close')}}</button>
   <nav class="nav">
+    {% if not workflow_preview %}<a href="{{url_for('ppmp_intake')}}">Upload Items</a>{% endif %}
     {% if not workflow_preview %}<a class="{{'active' if active=='dashboard'}}" href="{{url_for('dashboard')}}" {% if active=='dashboard' %}aria-current="page"{% endif %}>{{icon('dashboard')}}Dashboard{% if active=='dashboard' %}<span class="active-dot"></span>{% endif %}</a>
     {% endif %}<div class="nav-title">Procurement planning</div>
     {% if not workflow_preview %}<button class="nav-parent {{'active-parent' if active=='ppmp'}}" id="ppmpToggle" aria-expanded="{{ 'true' if active=='ppmp' else 'false' }}" aria-controls="ppmpSub">{{icon('document')}}<span>PPMP Preparation</span>{{icon('chevron')}}</button>
