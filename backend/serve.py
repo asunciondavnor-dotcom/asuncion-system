@@ -21,11 +21,14 @@ def server_settings():
 
 
 def main():
-    settings = server_settings()
-    from waitress import serve
-    from wsgi import application
-    if application.debug:
-        raise RuntimeError('The production WSGI launcher refuses debug mode.')
+    from render_resource_logging import measure, start_sampler
+    with measure('startup'):
+        settings = server_settings()
+        from waitress import serve
+        from wsgi import application
+        if application.debug:
+            raise RuntimeError('The production WSGI launcher refuses debug mode.')
+    start_sampler()
     serve(application, **settings)
 
 

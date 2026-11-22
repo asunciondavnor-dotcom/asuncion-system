@@ -796,7 +796,9 @@ def extract_document(filepath: str) -> Dict[str, Any]:
         raise RuntimeError('Document processing is busy; retry shortly.')
     token = _DOCUMENT_DEADLINE.set(monotonic()+60)
     try:
-        return _extract_document(filepath)
+        from render_resource_logging import measure
+        with measure('document_extraction'):
+            return _extract_document(filepath)
     finally:
         _DOCUMENT_DEADLINE.reset(token)
         _DOCUMENT_SLOTS.release()

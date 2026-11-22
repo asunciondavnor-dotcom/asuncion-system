@@ -220,6 +220,12 @@ def _predict(head, matrix, labels):
 
 
 def predict_pair(model_root, pr_text, po_text):
+    from render_resource_logging import measure
+    with measure('pr_po_nlp'):
+        return _predict_pair(model_root, pr_text, po_text)
+
+
+def _predict_pair(model_root, pr_text, po_text):
     validate_text(pr_text, po_text)
     assets = load_assets(model_root)
     try:

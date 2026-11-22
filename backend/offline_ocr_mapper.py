@@ -883,7 +883,9 @@ def map_document(document: Dict[str, Any]) -> Dict[str, Any]:
         return _map_document(document)
     token = _DOCUMENT_SEMANTIC_SCORES.set({})
     try:
-        return _map_document(document)
+        from render_resource_logging import measure
+        with measure('semantic_mapping'):
+            return _map_document(document)
     finally:
         _DOCUMENT_SEMANTIC_SCORES.reset(token)
 
