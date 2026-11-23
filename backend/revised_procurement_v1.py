@@ -960,6 +960,7 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
     first=next((f for f in findings if f['status']!='Match'),None)
     explanation='Source documents changed after verification.' if stale else (first['detail'].capitalize()+': '+first['status']+'.') if first else 'No unresolved saved discrepancy.' if status=='Match' else 'Saved evidence requires review.'
     value=None if stale else incidence['value']
+    model_disagreement=value==0 and row.get('result') in ('Reject','Needs Recanvass')
     if value is None:
         confirmed=next((f for f in findings if f['status']=='Mismatch' and f['percentage']=='100.00%'),None) if not stale else None
         status='Mismatch' if confirmed else 'Needs Review'
@@ -969,8 +970,9 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
         status=discrepancy_band(value)
         # A small affected-line rate cannot waive mandatory discrepancies.
         if status=='Match' and eligibility_status!='Match':status='Needs Review'
-    elif status!='Match':
-        status='Needs Review';explanation='Structured item-line discrepancy is 0%; the saved model result still requires review. This percentage does not authorize approval.'
+    else:
+        status='Match'
+        explanation='All assessed source item lines match.'
     for position in incidence['extras'] if value is not None else []:
         offered=item(po_items,position)
         reference=saved['source_fields']['PO'][position-1]['reference']
@@ -989,6 +991,7 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
            if value is not None else 'Not calculated: '+explanation)
     if value is None and measured!='Not calculated':basis='Pending discrepancy range: '+explanation
     return dict(status=status,percentage=measured,percentage_basis=basis,eligibility_status=eligibility_status,
+        model_disagreement=model_disagreement,
         percentage_final=value is not None,review_coverage=coverage,pending_checks=pending_checks,pending_items=pending_items,
         score_band=discrepancy_band(value),
         findings=findings,pairs=pairs,explanation=explanation)

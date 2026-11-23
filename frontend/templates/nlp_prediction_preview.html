@@ -25,6 +25,7 @@
   <p>Prediction confidence: {{'%.2f'|format(preview.confidence)}}%</p>
   <h3>Source comparison</h3>
   <p>{{result_badge(preview.display)}}</p>
+  {% if preview.display.model_disagreement %}<p class="notice">The model disagrees with the source match.</p>{% endif %}
   {{findings_table(preview.display)}}
 </section>
 {% endif %}
