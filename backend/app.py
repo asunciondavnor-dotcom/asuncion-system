@@ -3661,6 +3661,44 @@ def nlp_algorithms():
         title='NLP Algorithms',
     )
 
+@app.route('/nlp/prediction-preview', methods=['GET','POST'])
+def nlp_prediction_preview():
+    if not is_admin():
+        abort(403)
+    fields = ('pr_item','pr_quantity','pr_unit','po_item','po_quantity','po_unit')
+    values = {}
+    preview = None
+    if request.method == 'POST':
+        from nlp_runtime_selection import require_available
+        from procurement_comparison_v1 import compare, number
+        if (set(request.form)-set(fields)-{'csrf_token'} or request.files
+                or any(len(request.form.getlist(key))!=1 for key in fields)):
+            abort(400, description='Enter one item on each side of the comparison.')
+        values = {key:request.form[key].strip() for key in fields}
+        documents = []
+        for side in ('pr','po'):
+            item, quantity, unit = (values[f'{side}_{key}'] for key in ('item','quantity','unit'))
+            amount = number(quantity) if len(quantity)<=24 else None
+            if (not 0<len(item)<=300 or len(unit)>40 or (quantity and (amount is None or amount<=0))
+                    or any(not char.isprintable() for char in item+unit)):
+                abort(400, description='Enter an item description on both sides. Any quantity supplied must be positive.')
+            documents.append([dict(item=item,description=item,qty=quantity,unit=unit)])
+        request_queries.close()
+        require_available(app.config)
+        with render_model_preparation.ready_for_processing('rf',app.config):
+            try:
+                result, confidence, _ = nlp_predict(*documents)
+            except RuntimeError:
+                abort(503, description='The approved model could not complete this preview.')
+        comparison = compare(*documents)
+        preview = dict(result=result,confidence=confidence,display=revised_procurement.verification_display(
+            {'result':result},*documents,current_comparison=comparison))
+    response = app.make_response(render_template('nlp_prediction_preview.html',active='nlp',
+                        title='PR–PO Prediction Preview',values=values,preview=preview))
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
 @app.route('/iar', methods=['GET','POST'])
 def iar():
     if request.method=='POST':
