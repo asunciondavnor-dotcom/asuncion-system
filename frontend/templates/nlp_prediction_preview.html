@@ -21,7 +21,8 @@
 </section>
 {% if preview %}
 <section class="card section-gap" id="prediction-preview-result" aria-label="Prediction result">
-  <h3>Model prediction: {{preview.result}}</h3>
+  <h3>Verification verdict: {{preview.display.verdict}}</h3>
+  <p>Raw model prediction: {{preview.result}}</p>
   <p>Prediction confidence: {{'%.2f'|format(preview.confidence)}}%</p>
   <h3>Source comparison</h3>
   <p>{{result_badge(preview.display)}}</p>

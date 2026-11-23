@@ -990,8 +990,18 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
     basis=(f"Item-line discrepancy incidence: {incidence['affected']} affected / {incidence['total']} assessed lines; not model confidence or quantity deviation."
            if value is not None else 'Not calculated: '+explanation)
     if value is None and measured!='Not calculated':basis='Pending discrepancy range: '+explanation
+    verdict='Needs Review'
+    if value==0:
+        verdict='Acceptable'
+    elif not stale and value is not None:
+        confirmed={check.get('attribute') for line in saved['rows'] for index,check in enumerate(line['checks'])
+                   if incidence['checks'].get((line['pr_position'],index))==100 and check.get('state')=='MISMATCH'}
+        if 'source-backed product kind' in confirmed:
+            verdict='Reject'
+        elif confirmed or incidence['extras']:
+            verdict='Needs Recanvass'
     return dict(status=status,percentage=measured,percentage_basis=basis,eligibility_status=eligibility_status,
-        model_disagreement=model_disagreement,
+        verdict=verdict,model_disagreement=model_disagreement,
         percentage_final=value is not None,review_coverage=coverage,pending_checks=pending_checks,pending_items=pending_items,
         score_band=discrepancy_band(value),
         findings=findings,pairs=pairs,explanation=explanation)
