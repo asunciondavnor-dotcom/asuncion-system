@@ -32,6 +32,7 @@ DESCRIPTIVE={'description','description / specification','item description','spe
  'quantity and size of the project to be procured','warranty','warranty period','operating system','body material'}
 UNITS={'pc':'piece','pcs':'piece','pieces':'piece','piece':'piece','units':'unit','unit':'unit',
  'ream':'ream','reams':'ream','bottle':'bottle','bottles':'bottle','set':'set','sets':'set'}
+DIMENSION_PATTERN=re.compile(r'(?i)\b\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)*\s*(?:mm|cm|m)\b')
 
 def norm(value):return re.sub(r'\s+',' ',str(value or '')).strip().casefold()
 
@@ -147,14 +148,17 @@ def classification_scope(item,label,value):
 
 def evidence(item,position,side,*,technical=False):
     if type(item) is not dict:raise ValueError('SOURCE_ITEM_OBJECT_REQUIRED')
-    fields={};context={}
+    fields={};context={};planning_dimensions=[]
     for key,value in item.items():
         label=norm(str(key).replace('_',' '))
         scope=classification_scope(item,label,norm(value)) if technical else None
         if scope:
             context.setdefault(scope,set()).add(norm(value))
             continue
-        if technical and label in PLANNING_CONTEXT:continue
+        if technical and label in PLANNING_CONTEXT:
+            if label=='general description and objective of the project to be procured' and isinstance(value,str):
+                planning_dimensions.extend(DIMENSION_PATTERN.finditer(value[:8000]))
+            continue
         if not str(key).startswith('_') and (key in NAME or label in DESCRIPTIVE
             or technical and label in {'required category','required item type','product category','product type'} or re.search(
             r'capacity|model|power|voltage|length|width|height|frequency|technical|resolution|speed|compatib|specification|material|colou?r|brand|size|weight|rating|performance|warranty|operating system',label)):
@@ -169,6 +173,7 @@ def evidence(item,position,side,*,technical=False):
     quantities=[number(item[k]) for k in QUANTITY if item.get(k) not in (None,'')]
     units=[UNITS.get(norm(item[k]),norm(item[k])) for k in UNIT if item.get(k) not in (None,'')]
     return dict(position=position,reference=ref,name=name,fields=fields,description=description,context=context,
+        planning_dimensions=[match[0] for match in planning_dimensions],
         quantity=first(item,QUANTITY),unit=first(item,UNIT),
         conflicting_quantity=len(set(quantities))>1,conflicting_unit=len(set(units))>1)
 
@@ -201,8 +206,9 @@ def facts(row):
         result.setdefault(attribute,[]).append(dict(value=str(Decimal(match[2])),unit=match[3].upper(),operator=(match[1] or 'exact').lower()))
     for match in re.finditer(r'(?i)\bUSB\s*(\d+(?:\.\d+)?)\b',text):
         result.setdefault('USB interface',[]).append(dict(value=str(Decimal(match[1]).normalize()),unit='version',operator='exact'))
-    for match in re.finditer(r'(?i)\b\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)?\s*(?:mm|cm|m)\b',text):
-        result.setdefault('dimensions',[]).append(dict(value=re.sub(r'\s+','',match[0]).lower().replace('×','x'),unit='literal',operator='exact'))
+    dimensions=[match[0] for match in DIMENSION_PATTERN.finditer(text)] or row.get('planning_dimensions',[])
+    for dimension in dimensions:
+        result.setdefault('dimensions',[]).append(dict(value=re.sub(r'\s+','',dimension).lower().replace('×','x'),unit='literal',operator='exact'))
     for match in re.finditer(r'(?i)(?:(minimum|maximum|at least|at most)\s+)?(\d+(?:\.\d+)?)\s*(MB/s|GB/s|Mbps|Gbps|mAh|Ah|GHz|MHz|kHz|Hz|mm|cm|kg|ml|dpi|MP|inches|inch|in|g|m|V|W|A|L)\b',text):
         result.setdefault('measurement '+match[3].lower(),[]).append(dict(value=str(Decimal(match[2])),unit=match[3].lower(),operator=(match[1] or 'exact').lower()))
     for key,value in row['fields'].items():

@@ -818,7 +818,7 @@ def discrepancy_incidence(saved):
                 present=lambda v:v is not None and v!='' and v!=[] and v!={} and not isinstance(v,bool)
                 if isinstance(attribute,str) and attribute and present(requested):
                     if state in ('MATCH','MISMATCH') and present(offered):value=int(state=='MISMATCH')
-                    elif state=='MISSING_SPECIFICATION' and not present(offered):value=1
+                    elif state=='MISSING_SPECIFICATION' and attribute!='dimensions' and not present(offered):value=1
                 if attribute=='quantity':
                     a=evidence.number(requested);b=evidence.number(offered)
                     if identity!='EXACT_NAME' or not unit_ok or a is None or b is None or a<=0 or b<=0:value=None
@@ -1010,6 +1010,16 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
 def record_verification_display(api,row,left=None,right=None,*,stale=False):
     """Compare current linked sources for historical approvals without rewriting history."""
     display=verification_display(row,left or (),right or (),stale=stale)
+    if (not stale and row.get('workflow_version') in (1,2) and row.get('status')!='Approved'
+            and display['verdict']=='Acceptable' and evidence.DIMENSION_PATTERN.search(row.get('pr_items') or '')
+            and all(len(row.get(key) or '')<=64_000 for key in ('pr_items','po_items'))):
+        left=api['parse_items'](row.get('pr_items')) if left is None else left
+        right=api['parse_items'](row.get('po_items')) if right is None else right
+        if isinstance(left,list) and isinstance(right,list) and 0<len(left)<=20 and 0<len(right)<=20:
+            try:
+                return show_new_dimension_findings(row,display,left,right,evidence.compare(left,right))
+            except (ValueError,TypeError,AttributeError):
+                pass
     if row.get('status')!='Approved' or row.get('workflow_version') in (1,2) or display['percentage']!='Not calculated':
         return display
     links={row.get(key) for key in ('pr_id','po_pr_id','aoq_pr_id') if row.get(key) is not None}
@@ -1032,6 +1042,18 @@ def record_verification_display(api,row,left=None,right=None,*,stale=False):
     display['explanation']='A source-bound discrepancy percentage could not be established for this historical approval.'
     return display
 
+def show_new_dimension_findings(row,display,left,right,current):
+    if display['verdict']=='Acceptable' and any(
+        check.get('attribute')=='dimensions' and check.get('state') in ('MISSING_SPECIFICATION','MISMATCH')
+        for line in current.get('rows',[]) for check in line.get('checks',[])
+    ):
+        preview=verification_display(row,left,right,current_comparison=current)
+        preview['source_note']='Checked against linked documents'
+        preview['explanation']='The linked documents contain a dimensional requirement that needs attention.'
+        return preview
+    return display
+
+
 def verification_context(api,row):
     pr,po=source_pair(api,row['pr_id'],row['po_id'])
     saved,current,evidence_current=saved_review_evidence(api,row,pr,po)
@@ -1050,7 +1072,10 @@ def verification_context(api,row):
                      and tolerance_approval_current(row,technical))
     approval_available=(tolerance_ready and tolerance_eligible) or (
         review_evidence_current and row.get('result') in ('Acceptable','Needs Review'))
-    display=verification_display(row,api['parse_items'](pr['items']),api['parse_items'](po['items']),stale)
+    pr_items,po_items=api['parse_items'](pr['items']),api['parse_items'](po['items'])
+    display=verification_display(row,pr_items,po_items,stale)
+    if not stale and row.get('status')!='Approved':
+        display=show_new_dimension_findings(row,display,pr_items,po_items,technical)
     refresh_available=False
     if row.get('status') in ('For Review','Reviewed') and not stale and refresh_contract_ready(api):
         refreshed=refresh_current_comparison(api,row,pr,po)
@@ -1065,7 +1090,7 @@ def verification_context(api,row):
         elif review_evidence_current and display['eligibility_status']=='Match' and row.get('result') in ('Acceptable','Needs Review'):
             inspection_ready=any(p['id']==po['id'] for p in api['next_available_records']('iar')[5])
     return dict(row=row,pr=pr,po=po,
-        pr_items=api['parse_items'](pr['items']),po_items=api['parse_items'](po['items']),comparison=technical,
+        pr_items=pr_items,po_items=po_items,comparison=technical,
         details=details,saved_comparison=saved_comparison,stale=stale,review_evidence_current=review_evidence_current,
         can_review_relationship=relationship_review_allowed(api,po),score_ready=(row.get('result') in ('Acceptable','Needs Review')),
         tolerance_ready=tolerance_ready,tolerance_eligible=tolerance_eligible,approval_available=approval_available,

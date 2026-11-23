@@ -22,8 +22,7 @@
 {% if preview %}
 <section class="card section-gap" id="prediction-preview-result" aria-label="Prediction result">
   <h3>Verification verdict: {{preview.display.verdict}}</h3>
-  <p>Raw model prediction: {{preview.result}}</p>
-  <p>Prediction confidence: {{'%.2f'|format(preview.confidence)}}%</p>
+  <details><summary>Raw model prediction</summary><p>{{preview.result}} (model score {{'%.2f'|format(preview.confidence)}}%). This score is the model's preference for its selected label.</p></details>
   <h3>Source comparison</h3>
   <p>{{result_badge(preview.display)}}</p>
   {% if preview.display.model_disagreement %}<p class="notice">The model disagrees with the source match.</p>{% endif %}
