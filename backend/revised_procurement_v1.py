@@ -441,9 +441,11 @@ def tolerance_contract_ready(api):
               and has_function_privilege(current_user,p.oid,'EXECUTE')=?
               and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
                 where a.privilege_type='EXECUTE' and (a.is_grantable or
-                  (a.grantee<>p.proowner and (not ? or a.grantee<>'psms_vercel_backend'::regrole))))) ready""",
+                  (a.grantee<>p.proowner
+                   and (not ? or a.grantee<>'psms_vercel_backend'::regrole)
+                   and (not ? or a.grantee<>'psms_workflow_owner'::regrole))))) ready""",
                 ('psms_aoq_api.'+name+'('+','.join(kinds)+')',definer,
-                 TOLERANCE_ROUTINE_MD5[name],public,public,public)).fetchone()
+                 TOLERANCE_ROUTINE_MD5[name],public,public,public,name=='lock_po_for_workflow_v4')).fetchone()
             if not row or row.get('ready') is not True:return False
         ready=True
         return True
@@ -600,10 +602,12 @@ def staged_verification(api,row):
         status='Reviewed'
     else:
         if request.form.get('final_confirm')!='yes':abort(400,description='Explicit final approval confirmation is required.')
-        tolerance=tolerance_contract_ready(api) and tolerance_review_matches(row,mapping,current)
-        if not tolerance and (row.get('result') not in ('Acceptable','Needs Review') or not stored_review_matches(row,mapping,current)):
+        exact_match=(discrepancy_incidence(current).get('value')==0
+                     and tolerance_review_matches(row,mapping,current)
+                     and tolerance_contract_ready(api))
+        if not exact_match and (row.get('result') not in ('Acceptable','Needs Review') or not stored_review_matches(row,mapping,current)):
             abort(422,description='Unresolved technical or model findings prevent approval. Reviewed does not authorize IAR.')
-        receipt=rpc(api,'approve_reviewed_pr_po_v4' if tolerance else 'approve_reviewed_pr_po_v3',(row['id'],True))
+        receipt=rpc(api,'approve_reviewed_pr_po_v4' if exact_match else 'approve_reviewed_pr_po_v3',(row['id'],True))
         status='Approved'
     if not isinstance(receipt,dict):return receipt
     if receipt.get('nlp_id')!=row['id'] or receipt.get('po_id')!=row['po_id'] or receipt.get('new_status')!=status:abort(503)
@@ -1076,7 +1080,8 @@ def verification_context(api,row):
     current_mapping=[item.get('po_position') for item in technical.get('rows',[])]
     review_evidence_current=stored_review_matches(row,current_mapping,technical)
     tolerance_ready=tolerance_contract_ready(api)
-    tolerance_eligible=(not stale and evidence_current and tolerance_review_matches(row,current_mapping,technical))
+    tolerance_eligible=(not stale and evidence_current and discrepancy_incidence(technical).get('value')==0
+                        and tolerance_review_matches(row,current_mapping,technical))
     policy_approved=(tolerance_ready and row.get('status')=='Approved'
                      and tolerance_approval_current(row,technical))
     approval_available=(tolerance_ready and tolerance_eligible) or (
@@ -1090,9 +1095,9 @@ def verification_context(api,row):
         refreshed=refresh_current_comparison(api,row,pr,po)
         refresh_available=refresh_comparison_allowed(row,pr,po,refreshed)
     if tolerance_ready and tolerance_eligible:
-        if discrepancy_incidence(technical).get('value')==0:display['status']='Match'
-        display['eligibility_status']='Eligible under 10% policy'
-        display['explanation']='Final measured discrepancy is at most 10%. Authorized manual approval is permitted; original model output and individual findings are preserved.'
+        display['status']='Match'
+        display['eligibility_status']='Eligible for exact-match approval'
+        display['explanation']='All assessed source item lines match. An authorized reviewer can approve the relationship.'
     inspection_ready=False
     if not stale and row.get('status')=='Approved' and po.get('status')=='Approved':
         if policy_approved:inspection_ready=True
