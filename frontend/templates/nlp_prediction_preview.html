@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
-{% from 'pr_po_verification_ui.html' import result_badge,findings_table with context %}
+{% from 'pr_po_verification_ui.html' import result_summary,findings_table with context %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 <section class="card">
   <div class="toolbar page-head"><h2>PR–PO Prediction Preview</h2><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
@@ -21,10 +22,7 @@
 </section>
 {% if preview %}
 <section class="card section-gap" id="prediction-preview-result" aria-label="Prediction result">
-  <h3>Verification verdict: {{preview.display.verdict}}</h3>
-  <details><summary>Raw model prediction</summary><p>{{preview.result}} (model score {{'%.2f'|format(preview.confidence)}}%). This score is the model's preference for its selected label.</p></details>
-  <h3>Source comparison</h3>
-  <p>{{result_badge(preview.display)}}</p>
+  {{result_summary(preview.display,preview.result,preview.confidence)}}
   {% if preview.display.model_disagreement %}<p class="notice">The model disagrees with the source match.</p>{% endif %}
   {{findings_table(preview.display)}}
 </section>

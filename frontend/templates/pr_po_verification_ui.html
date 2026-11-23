@@ -7,6 +7,25 @@
 {% if pending %}<span class="muted">{{pending}} {{'check needs' if pending==1 else 'checks need'}} review</span>{% endif %}
 {% if d.source_note|default('') %}<small class="muted">{{d.source_note}}</small>{% endif %}
 {%- endmacro %}
+{% macro outcome_badge(label, score=none) -%}
+{% set tone={'Acceptable':'acceptable','Needs Recanvass':'recanvass','Needs Review':'review','Reject':'reject'}.get(label,'neutral') %}
+<span class="pr-po-outcome pr-po-outcome--{{tone}}">{{label or 'Not recorded'}}{% if score is number %} <span class="pr-po-outcome-score">{{'%.2f'|format(score)}}%</span>{% endif %}</span>
+{%- endmacro %}
+{% macro result_summary(d, prediction, score) -%}
+<div class="pr-po-result-summary" role="status">
+  <section class="pr-po-result-panel">
+    <h3>Verification verdict</h3>
+    {{outcome_badge(d.verdict)}}
+    <p>Source comparison {{result_badge(d)}}</p>
+    <p class="muted">{% if d.pending_checks and not d.percentage_final %}A final discrepancy percentage will be available when the pending source checks are resolved.{% else %}{{d.explanation}}{% endif %}</p>
+  </section>
+  <section class="pr-po-result-panel">
+    <h3>Model prediction</h3>
+    {{outcome_badge(prediction,score)}}
+    {% if score is number %}<p class="muted">The percentage is the model score for its predicted outcome.</p>{% endif %}
+  </section>
+</div>
+{%- endmacro %}
 {% macro item_value(item,keys) -%}{% set found=namespace(value=none) %}{% for key in keys if found.value is none %}{% if item.get(key) is not none and item.get(key)!='' %}{% set found.value=item.get(key) %}{% endif %}{% endfor %}{{display_value(found.value)}}{%- endmacro %}
 {% macro comparison_table(d) -%}
 <div class="table-scroll"><table class="table"><thead><tr><th>No.</th><th>PR Item Description</th><th>PO Item Description</th><th>PR Quantity</th><th>PO Quantity</th><th>PR Unit</th><th>PO Unit</th><th>Quantity difference</th><th>Item-line check</th></tr></thead><tbody>

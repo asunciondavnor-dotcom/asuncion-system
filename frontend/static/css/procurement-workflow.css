@@ -264,6 +264,29 @@ body:has(.aoq-reference-workspace) #mainContent > .dataset-pagination { display:
 .pr-po-simple select {width:100%;min-width:0}
 .pr-po-simple .pr-po-result {padding:18px;margin:18px 0;border-radius:8px}
 .pr-po-simple .pr-po-result p {margin:8px 0 0}
+.pr-po-record-heading p {margin:0}
+.pr-po-result-summary,.pr-po-action-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.pr-po-result-panel {min-width:0;padding:16px;border:1px solid var(--line);border-radius:8px;background:#f8fafb}
+.pr-po-result-panel h3,.pr-po-simple .pr-po-result-panel h3,.pr-po-simple .pr-po-action-panel h3 {margin:0 0 8px;font-size:16px}
+.pr-po-result-panel p {margin:8px 0 0}
+.pr-po-outcome {display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;max-width:100%;padding:4px 9px;border-radius:6px;font-size:.9em;font-weight:650;line-height:1.4;background:#e9eef2;color:#334155}
+.pr-po-outcome--acceptable {background:#dff2e7;color:#155638}
+.pr-po-outcome--recanvass {background:#ffedc7;color:#774504}
+.pr-po-outcome--review {background:#e2eeff;color:#1b4374}
+.pr-po-outcome--reject {background:#fbe4e6;color:#8b2435}
+.pr-po-outcome-score {font-variant-numeric:tabular-nums;white-space:nowrap}
+.pr-po-simple .pr-po-action-panel {display:grid;gap:12px}
+.pr-po-simple .pr-po-action-panel p {margin:0;overflow-wrap:anywhere}
+.pr-po-simple .pr-po-action-fields {align-items:start}
+.pr-po-simple .pr-po-action-fields input,.pr-po-simple .pr-po-action-fields textarea {width:100%;min-width:0}
+.pr-po-simple .pr-po-action-panel .review-confirm-check {display:flex;gap:10px}
+.pr-po-simple .pr-po-action-panel .review-confirm-check input {flex:none}
+.pr-po-action-footer {display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--line)}
+.pr-po-action-panel > .btn {justify-self:start}
+@media(max-width:760px) {
+  .pr-po-result-summary,.pr-po-action-fields {grid-template-columns:minmax(0,1fr)}
+  .pr-po-action-footer .btn {width:100%;justify-content:center}
+}
 .pr-po-simple .pr-po-attention {background:#fff0f1;color:#812532}
 .pr-po-simple .pr-po-match {background:#eaf6ee;color:#155638}
 .pr-po-simple .table-scroll {overflow:auto;max-height:410px;margin:14px 0}
