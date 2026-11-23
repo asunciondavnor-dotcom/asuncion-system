@@ -1011,13 +1011,14 @@ def record_verification_display(api,row,left=None,right=None,*,stale=False):
     """Compare current linked sources for historical approvals without rewriting history."""
     display=verification_display(row,left or (),right or (),stale=stale)
     if (not stale and row.get('workflow_version') in (1,2) and row.get('status')!='Approved'
-            and display['verdict']=='Acceptable' and evidence.DIMENSION_PATTERN.search(row.get('pr_items') or '')
-            and all(len(row.get(key) or '')<=64_000 for key in ('pr_items','po_items'))):
+            and display['verdict'] in ('Acceptable','Needs Review')
+            and all(len(row.get(key) or '')<=64_000 for key in ('pr_items','po_items'))
+            and (evidence.DIMENSION_PATTERN.search(row.get('pr_items') or '') or '_OCR Field Evidence' in (row.get('pr_items') or ''))):
         left=api['parse_items'](row.get('pr_items')) if left is None else left
         right=api['parse_items'](row.get('po_items')) if right is None else right
         if isinstance(left,list) and isinstance(right,list) and 0<len(left)<=20 and 0<len(right)<=20:
             try:
-                return show_new_dimension_findings(row,display,left,right,evidence.compare(left,right))
+                return show_updated_source_findings(row,display,left,right,evidence.compare(left,right))
             except (ValueError,TypeError,AttributeError):
                 pass
     if row.get('status')!='Approved' or row.get('workflow_version') in (1,2) or display['percentage']!='Not calculated':
@@ -1042,7 +1043,7 @@ def record_verification_display(api,row,left=None,right=None,*,stale=False):
     display['explanation']='A source-bound discrepancy percentage could not be established for this historical approval.'
     return display
 
-def show_new_dimension_findings(row,display,left,right,current):
+def show_updated_source_findings(row,display,left,right,current):
     if display['verdict']=='Acceptable' and any(
         check.get('attribute')=='dimensions' and check.get('state') in ('MISSING_SPECIFICATION','MISMATCH')
         for line in current.get('rows',[]) for check in line.get('checks',[])
@@ -1051,6 +1052,14 @@ def show_new_dimension_findings(row,display,left,right,current):
         preview['source_note']='Checked against linked documents'
         preview['explanation']='The linked documents contain a dimensional requirement that needs attention.'
         return preview
+    if (display['verdict']=='Needs Review' and current.get('technical_status')=='MATCH'
+            and any(evidence.worksheet_item_specification(item) for item in left)
+            and any(finding['detail']=='source specification wording' and finding['status']=='Needs Review' for finding in display['findings'])):
+        preview=verification_display(row,left,right,current_comparison=current)
+        if preview['verdict']=='Acceptable':
+            preview['source_note']='Checked against linked documents'
+            preview['explanation']='The source specifications match after checking the uploaded Excel description.'
+            return preview
     return display
 
 
@@ -1075,7 +1084,7 @@ def verification_context(api,row):
     pr_items,po_items=api['parse_items'](pr['items']),api['parse_items'](po['items'])
     display=verification_display(row,pr_items,po_items,stale)
     if not stale and row.get('status')!='Approved':
-        display=show_new_dimension_findings(row,display,pr_items,po_items,technical)
+        display=show_updated_source_findings(row,display,pr_items,po_items,technical)
     refresh_available=False
     if row.get('status') in ('For Review','Reviewed') and not stale and refresh_contract_ready(api):
         refreshed=refresh_current_comparison(api,row,pr,po)

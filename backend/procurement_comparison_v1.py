@@ -146,6 +146,16 @@ def classification_scope(item,label,value):
             return 'procurement project type'
     return None
 
+def worksheet_item_specification(item):
+    metadata=item.get('_OCR Field Evidence')
+    source=metadata.get('_source_evidence') if isinstance(metadata,dict) else None
+    if not isinstance(source,dict) or not source.get('worksheet'):
+        return ''
+    headers=source.get('headers')
+    value=item.get('General Description and Objective of the Project to be Procured')
+    return value.strip() if isinstance(headers,list) and sum(norm(header)=='description' for header in headers)==1 and isinstance(value,str) else ''
+
+
 def evidence(item,position,side,*,technical=False):
     if type(item) is not dict:raise ValueError('SOURCE_ITEM_OBJECT_REQUIRED')
     fields={};context={};planning_dimensions=[]
@@ -167,6 +177,12 @@ def evidence(item,position,side,*,technical=False):
             if len(text)>8000:raise ValueError('SOURCE_DESCRIPTION_LIMIT')
             if text:fields[key]=text
     name=str(first(item,NAME) or first(item,('description','Description / Specification','Item Description')) or '').strip()
+    if technical and side=='PR' and fields.get('Item Description') and norm(fields['Item Description'])==norm(name):
+        has_dedicated_spec=any(norm(k) in ('description / specification','description','specification','specifications','technical specifications','detailed specifications') for k in fields)
+        if not has_dedicated_spec:
+            source_spec=worksheet_item_specification(item)
+            if source_spec:
+                fields['Item Description']=source_spec
     ref=next((str(item[k]) for k in ('_PR Item ID','_PO Item ID','_AOQ Item ID') if item.get(k)),f'{side}:{position}')
     description=' | '.join(f'{key}: {value}' for key,value in fields.items())
     if len(description)>16000:raise ValueError('SOURCE_DESCRIPTION_LIMIT')
