@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'pr_po_verification_ui.html' import result_badge,outcome_badge,result_summary,comparison_table,findings_table with context %}
+{% from 'pr_po_verification_ui.html' import result_badge,outcome_badge,result_summary,comparison_table,findings_table,model_assessment,source_approval_summary with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}<section class="card pr-po-simple"><h2>PR–PO Review</h2>
 <div class="actions"><a class="btn small" href="{{url_for('nlp_algorithms')}}">Model information and classification examples</a>{% if session.get('role')=='Admin' %}<a class="btn small" href="{{url_for('nlp_prediction_preview')}}">Preview model prediction</a>{% endif %}</div>
@@ -15,8 +15,13 @@
   <h3>{{v.row.no}}</h3>
   <p class="muted">PR {{v.pr.no}} · PO {{v.po.no}} · Verification status: {{v.row.status}}</p>
 </header>
-{{result_summary(v.display,v.row.result,v.row.confidence)}}
+{{result_summary(v.display,v.row.result,v.row.confidence,v.model_assessment|default(none))}}
+{% if v.model_assessment %}
+{{model_assessment(v.model_assessment)}}
+<details><summary>View item checks for approval</summary>{{source_approval_summary(v.display)}}{{comparison_table(v.display)}}</details>
+{% else %}
 {{comparison_table(v.display)}}
+{% endif %}
 {% if not historical|default(false) and (v.display.status!='Match' or v.display.model_disagreement) %}<div class="actions"><a class="btn" href="{{url_for('pr_review',id=v.pr.id)}}">Review linked PR</a><a class="btn" href="{{url_for('po_review',id=v.po.id)}}">Review linked PO</a></div>{% endif %}
 <details><summary>View the saved checks and percentage basis</summary><p>{{v.display.percentage_basis}}</p>{% if v.display.review_coverage and v.display.pending_checks %}<p>{{v.display.review_coverage}} of source checks resolved.</p>{% endif %}{{findings_table(v.display,v.pr.id|default(none),v.po.id|default(none))}}<p>Quantity deviation = absolute difference between PO and PR quantity ÷ PR quantity × 100. An unresolved specification is not counted as a match.</p></details>
 

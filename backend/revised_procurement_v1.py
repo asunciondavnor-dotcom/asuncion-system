@@ -9,6 +9,7 @@ import json
 import os
 import math
 import re
+from contextlib import contextmanager
 from functools import wraps
 import hashlib
 import secrets
@@ -615,6 +616,27 @@ def staged_verification(api,row):
           'PR-PO relationship Approved. Receiving remains subject to the existing IAR eligibility checks.')
     return redirect(url_for('iar',po_id=row['po_id']) if status=='Approved' else url_for('nlp',verification_id=row['id']))
 
+@contextmanager
+def pr_po_predictor(app):
+    if app.testing and app.config.get('PSMS_ENV') in ('local','test'):
+        isolated = app.extensions.get('pr_po_model_assessor')
+        if isolated is not None:
+            yield isolated
+            return
+
+    from nlp_runtime_selection import require_available
+    from render_model_preparation import ready_for_processing
+    require_available(app.config)
+    with ready_for_processing('rf', app.config):
+        if app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+            from pr_po_release import assessor
+            from render_resource_logging import measure
+            with measure('pr_po_model_inference'):
+                yield assessor()
+        else:
+            yield None
+
+
 def nlp_page(api):
     if request.method=='POST':
         pr_id,po_id=identifier(request.form.get('pr_id')),identifier(request.form.get('po_id'))
@@ -640,23 +662,30 @@ def nlp_page(api):
         if plan['action']=='replace' and not replacement_contract_ready(api):
             abort(409,description='The append-only legacy verification replacement contract is not installed and reviewed.')
         if not final_contract_ready(api):abort(409,description='The post-approval NLP save contract is not installed and reviewed. No model result or database record was fabricated.')
-        from nlp_runtime_selection import require_available
-        require_available(api['app'].config)
-        from render_model_preparation import ready_for_processing
-        with ready_for_processing('rf',api['app'].config):
+        api['request_queries'].close()
+        assessment=None
+        with pr_po_predictor(api['app']) as assessor:
             try:
-                result,confidence,raw=api['nlp_predict'](
-                    evidence.inference_items(api['parse_items'](pr['items']),'PR'),
-                    evidence.inference_items(api['parse_items'](po['items']),'PO'))
+                pr_items,po_items=api['parse_items'](pr['items']),api['parse_items'](po['items'])
+                if assessor is not None:
+                    assessment=assessor.assess(pr_items,po_items)
+                    result,confidence=assessment['document']['label'],assessment['document']['score']
+                    raw=dict(trained_model_used=True,model_metadata={'model_version':assessment['model_version']})
+                else:
+                    result,confidence,raw=api['nlp_predict'](
+                        evidence.inference_items(pr_items,'PR'),evidence.inference_items(po_items,'PO'))
                 if raw.get('trained_model_used') is not True or result not in ('Acceptable','Needs Review','Needs Recanvass','Reject'):
                     raise RuntimeError('Trained model result required')
                 if isinstance(confidence,bool) or not math.isfinite(float(confidence)) or not 0<=float(confidence)<=100:
                     raise RuntimeError('Invalid model confidence')
-                technical=comparison(api,pr,po,semantic=True)
+                technical=comparison(api,pr,po,semantic=assessor is None)
                 metadata=raw.get('model_metadata') or {}
                 metadata_hash=hashlib.sha256(json.dumps(metadata,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
                 artifact_hashes={}
-                if api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
+                if assessor is not None and api['app'].config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+                    from pr_po_release import ARTIFACTS
+                    artifact_hashes=dict(ARTIFACTS)
+                if assessor is None and api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
                     import fasttext_nlp_runtime
                     from nlp_runtime_selection import model_root
                     for kind,path in fasttext_nlp_runtime.required_paths(model_root(api['app'].config,api['NLP_FASTTEXT_DIR'])).items():
@@ -672,7 +701,9 @@ def nlp_page(api):
             model_metadata_sha256=metadata_hash,model_artifacts_sha256=artifact_hashes,
             approved_inference_release_id=api['app'].config.get('_PSMS_INFERENCE_RELEASE_ID'),
             workflow_version=2,source_pr_id=pr_id,source_po_id=po_id,technical_comparison=technical,
-            overall_verification_status=(result if result in ('Reject','Needs Recanvass') or technical['technical_status']=='MATCH' else 'Needs Review'))
+            overall_verification_status=result)
+        if assessment is not None:
+            details['model_assessment']=assessment
         values=(po_id,pr_id,evidence.fingerprint(pr['items']),evidence.fingerprint(po['items']),result,float(confidence),
             json.dumps(details,ensure_ascii=False),model_version,technical['technical_status'])
         try:
@@ -1088,6 +1119,12 @@ def verification_context(api,row):
         review_evidence_current and row.get('result') in ('Acceptable','Needs Review'))
     pr_items,po_items=api['parse_items'](pr['items']),api['parse_items'](po['items'])
     display=verification_display(row,pr_items,po_items,stale)
+    model_assessment=None
+    if not stale and isinstance(details.get('model_assessment'),dict):
+        saved_model=details['model_assessment']
+        if saved_model.get('document')=={'label':row.get('result'),'score':row.get('confidence')}:
+            from pr_po_model_assessment import display as display_model_assessment
+            model_assessment=display_model_assessment(saved_model,pr_items,po_items)
     if not stale and row.get('status')!='Approved':
         display=show_updated_source_findings(row,display,pr_items,po_items,technical)
     refresh_available=False
@@ -1110,7 +1147,7 @@ def verification_context(api,row):
         tolerance_ready=tolerance_ready,tolerance_eligible=tolerance_eligible,approval_available=approval_available,
         refresh_available=refresh_available,
         review_stage_ready=review_stage_contract_ready(api),source_evidence_current=evidence_current,
-        display=display,inspection_ready=inspection_ready)
+        display=display,model_assessment=model_assessment,inspection_ready=inspection_ready)
 
 def historical_review(api,row):
     """Read-only saved history in the main workspace; never infer or authorize."""

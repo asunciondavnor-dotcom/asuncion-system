@@ -31,8 +31,13 @@ def main():
         font=ImageFont.truetype('DejaVuSans.ttf', 45), fill='black')
     text = pytesseract.image_to_string(image, lang='eng', config='--psm 6', timeout=25)
     releases.require('SYNTHETIC' in text and '42' in text, 'RENDER_NATIVE_OCR_FAILED')
+    model_name = None
+    if os.environ.get('PSMS_RENDER_PR_PO_MODEL') == '1':
+        from pr_po_release import VERSION, checked_model
+        checked_model()
+        model_name = VERSION
     print(json.dumps({'files_verified': 28, 'native_ocr': True,
-        'runtime_model_downloads': False, 'database_contacted': False}))
+        'pr_po_model': model_name, 'runtime_model_downloads': False, 'database_contacted': False}))
 
 
 if __name__ == '__main__':

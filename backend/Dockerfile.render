@@ -3,7 +3,9 @@
 # The existing VCR digest is a local compatibility default, not a verified Render
 # registry integration. Override APPROVED_MODEL_IMAGE with the reviewed mirror.
 ARG APPROVED_MODEL_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:ab17ebc3a697568a4a3fcafd7af686d7e7e258bda36c7b7e33817da9007356ee
+ARG PR_PO_MODEL_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:f6217fd6ee05fcf3423acae0df979f3b69deb82d24d3284cc8359c304cf035a2
 FROM ${APPROVED_MODEL_IMAGE} AS approved_models
+FROM ${PR_PO_MODEL_IMAGE} AS pr_po_model
 
 FROM python:3.13.16-slim-bookworm AS source
 WORKDIR /source
@@ -19,6 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PSMS_DATA_DIR=/tmp/psms HOME=/tmp \
     PSMS_NLP_RUNTIME=retrained_rf PSMS_INFERENCE_ENABLED=1 \
     PSMS_INFERENCE_RELEASE_ID=nlp-online-original-v2 PSMS_INFERENCE_CACHE_ENABLED=0 \
+    PSMS_RENDER_PR_PO_MODEL=1 \
     PSMS_PRODUCTION_DB_ENABLED=0 PSMS_DURABLE_WORKBOOKS_ENABLED=1 \
     PSMS_DB_SSLROOTCERT=/app/certs/supabase-ca.crt \
     TESSERACT_CMD=/usr/bin/tesseract PSMS_RENDER_OCR_BUDGET=1 \
@@ -38,6 +41,7 @@ RUN pip install --no-cache-dir --only-binary=:all: --no-deps \
        -r /app/deploy/requirements-staging-linux-amd64.lock.txt && pip check
 COPY --from=source /runtime/ /app/
 COPY --from=approved_models --chmod=0555 /inference_releases/nlp-online-original-v2/ /app/inference_releases/nlp-online-original-v2/
+COPY --from=pr_po_model --chmod=0555 /inference_releases/asuncion-minilm-linear-svm-v1/ /app/inference_releases/asuncion-minilm-linear-svm-v1/
 RUN chmod 0444 /app/certs/supabase-ca.crt
 USER psms
 RUN python -B deploy/render_image_check.py

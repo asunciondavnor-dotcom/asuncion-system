@@ -24,6 +24,9 @@ def _ready(kind, config):
     if kind == 'semantic':
         from offline_ocr_mapper import semantic_model_ready
         return semantic_model_ready(release)
+    if config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+        from pr_po_release import prepared
+        return prepared()
     from retrained_nlp_runtime import assets_ready
     return assets_ready(config['PSMS_RETRAINED_NLP_DIR'], release)
 
@@ -34,10 +37,15 @@ def _load(kind, config):
     from render_resource_logging import measure
 
     failed = True
+    linear = kind == 'rf' and config.get('PR_PO_LINEAR_MODEL_ENABLED')
+    operation = 'model_preparation_pr_po' if linear else 'model_preparation_' + kind
     try:
-        with measure('model_preparation_' + kind), model_memory_scope():
+        with measure(operation), model_memory_scope():
             if kind == 'semantic':
                 load_local_model()
+            elif linear:
+                from pr_po_release import prepare
+                prepare()
             else:
                 from nlp_runtime_selection import runtime
                 runtime(config).load_assets(config['PSMS_RETRAINED_NLP_DIR'])

@@ -11,7 +11,11 @@
 {% set tone={'Acceptable':'acceptable','Needs Recanvass':'recanvass','Needs Review':'review','Reject':'reject'}.get(label,'neutral') %}
 <span class="pr-po-outcome pr-po-outcome--{{tone}}">{{label or 'Not recorded'}}{% if score is number %} <span class="pr-po-outcome-score">{{'%.2f'|format(score)}}%</span>{% endif %}</span>
 {%- endmacro %}
-{% macro result_summary(d, prediction, score) -%}
+{% macro source_approval_summary(d) -%}
+<p>{{result_badge(d,source_only=true)}}</p>
+<p class="muted">{% if d.pending_checks and not d.percentage_final %}The discrepancy percentage will be available after the remaining checks are resolved.{% else %}{{d.explanation}}{% endif %}</p>
+{%- endmacro %}
+{% macro result_summary(d, prediction, score, assessment=none) -%}
 <div class="pr-po-result-summary" role="status">
   <section class="pr-po-result-panel">
     <h3>Predicted classification</h3>
@@ -19,13 +23,28 @@
     {% if score is number %}<p class="muted">The percentage is the model score for its predicted outcome.</p>{% endif %}
   </section>
   <section class="pr-po-result-panel">
+    {% if assessment %}
+    <h3>Model assessment of source items</h3>
+    <div class="actions">{% for label,count in assessment.counts.items() %}{% if count %}<span>{{outcome_badge(label)}} {{count}}</span>{% endif %}{% endfor %}</div>
+    {% if assessment.flagged_rate is number %}<p>The model flagged {{'%.2f'|format(assessment.flagged_rate)}}% of assessed lines for recanvassing or rejection.</p>{% else %}<p>The flagged-line percentage is pending review of {{assessment.counts['Needs Review']}} assessed item(s).</p>{% endif %}
+    {% else %}
     <h3>Source checks for approval</h3>
-    <p>{{result_badge(d,source_only=true)}}</p>
-    <p class="muted">{% if d.pending_checks and not d.percentage_final %}The discrepancy percentage will be available after the remaining checks are resolved.{% else %}{{d.explanation}}{% endif %}</p>
+    {{source_approval_summary(d)}}
+    {% endif %}
   </section>
 </div>
 {%- endmacro %}
 {% macro item_value(item,keys) -%}{% set found=namespace(value=none) %}{% for key in keys if found.value is none %}{% if item.get(key) is not none and item.get(key)!='' %}{% set found.value=item.get(key) %}{% endif %}{% endfor %}{{display_value(found.value)}}{%- endmacro %}
+{% macro model_assessment(a) -%}
+  <div class="table-scroll"><table class="table">
+    <thead><tr><th>PR source item</th><th>PO source item</th><th>Model item-line assessment</th></tr></thead>
+    <tbody>{% for row in a.rows %}<tr>
+      <td>{% if row.pr_position %}{{row.pr_position}}. {{item_value(row.pr,['Item Name','item','name','Item','description','Item Description','Description / Specification'])}}<br><small class="muted">{{item_value(row.pr,['Quantity','quantity','qty','QTY','Requested Quantity'])}} {{item_value(row.pr,['Unit','unit','Unit of Measure','unit_of_measure','uom'])}}</small>{% else %}No matching PR item{% endif %}</td>
+      <td>{% if row.po_position %}{{row.po_position}}. {{item_value(row.po,['Item Name','item','name','Item','description','Item Description','Description / Specification'])}}<br><small class="muted">{{item_value(row.po,['Quantity','quantity','qty','QTY','Awarded Quantity'])}} {{item_value(row.po,['Unit','unit','Unit of Measure','unit_of_measure','uom'])}}</small>{% else %}No matching PO item{% endif %}</td>
+      <td>{{outcome_badge(row.label,row.score)}}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+{%- endmacro %}
 {% macro comparison_table(d) -%}
 <div class="table-scroll"><table class="table"><thead><tr><th>No.</th><th>PR Item Description</th><th>PO Item Description</th><th>PR Quantity</th><th>PO Quantity</th><th>PR Unit</th><th>PO Unit</th><th>Quantity difference</th><th>Item-line check</th></tr></thead><tbody>
 {% for pair in d.pairs %}<tr><td>{{loop.index}}</td><td>{{item_value(pair.pr,['Item Name','item','name','Item'])}}</td><td>{{item_value(pair.po,['Item Name','item','name','Item'])}}</td><td>{{item_value(pair.pr,['Quantity','quantity','qty','QTY','Requested Quantity'])}}</td><td>{{item_value(pair.po,['Quantity','quantity','qty','QTY','Awarded Quantity'])}}</td><td>{{item_value(pair.pr,['Unit','unit','Unit of Measure','unit_of_measure','uom'])}}</td><td>{{item_value(pair.po,['Unit','unit','Unit of Measure','unit_of_measure','uom'])}}</td><td>{% if pair.quantity_percentage=='0.00%' %}No difference{% elif pair.quantity_percentage %}{{pair.quantity_percentage}}{% else %}Not enough information{% endif %}</td><td><span class="badge {{'ok' if pair.status=='Match' else 'warn'}}">{{pair.status}}</span></td></tr>{% else %}<tr><td colspan="9">Saved item correspondence is not available.</td></tr>{% endfor %}

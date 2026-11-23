@@ -68,6 +68,8 @@ configure_runtime(app)
 from nlp_runtime_selection import configure as configure_nlp_runtime
 configure_nlp_runtime(app, BASE_DIR)
 import render_model_preparation
+from pr_po_release import configure as configure_pr_po_release
+configure_pr_po_release(app.config)
 app.config['RENDER_MODEL_PREPARATION'] = render_model_preparation.enabled(app.config)
 app.config['PR_PO_ITEM_COMPARISON_ENABLED'] = os.environ.get('PSMS_ITEM_COMPARISON_ENABLED', '1') == '1'
 durable_ocr.register(app)
@@ -1982,10 +1984,15 @@ def trained_nlp_model_status():
                 'diagnostic_code':'INFERENCE_DISABLED'}
     if render_model_preparation.enabled(app.config):
         ready = render_model_preparation.state('rf', app.config) == 'ready'
+        if app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+            from pr_po_release import NAME, VERSION
+            model = {'deployed_model': NAME, 'runtime': VERSION}
+        else:
+            model = {'deployed_model': 'FastText + Random Forest', 'runtime': 'retrained_rf'}
         return {'active': ready, 'can_prepare': True,
                 'message': ('Approved verification model ready.' if ready
                             else 'The approved verification model prepares before use.'),
-                'manifest': {'deployed_model': 'FastText + Random Forest', 'runtime': 'retrained_rf'}}
+                'manifest': model}
     try:
         from nlp_runtime_selection import runtime, model_root
         return runtime(app.config).model_status(model_root(app.config, NLP_FASTTEXT_DIR))
@@ -3662,10 +3669,12 @@ def nlp_approve(id):
 
 @app.route('/nlp/algorithms')
 def nlp_algorithms():
+    model_state = trained_nlp_model_status()
     return render_template(
         'nlp_algorithms.html',
         active='nlp',
         algorithms=algorithm_comparison(),
+        active_model=(model_state.get('manifest') or {}).get('deployed_model'),
         title='NLP Algorithms',
     )
 
@@ -3674,32 +3683,41 @@ def nlp_prediction_preview():
     if not is_admin():
         abort(403)
     fields = ('pr_item','pr_quantity','pr_unit','po_item','po_quantity','po_unit')
+    specifications = ('pr_specification','po_specification')
     values = {}
     preview = None
     if request.method == 'POST':
-        from nlp_runtime_selection import require_available
         from procurement_comparison_v1 import compare, number
-        if (set(request.form)-set(fields)-{'csrf_token'} or request.files
-                or any(len(request.form.getlist(key))!=1 for key in fields)):
+        if (set(request.form)-set(fields+specifications)-{'csrf_token'} or request.files
+                or any(len(request.form.getlist(key))!=1 for key in fields)
+                or any(len(request.form.getlist(key))>1 for key in specifications)):
             abort(400, description='Enter one item on each side of the comparison.')
-        values = {key:request.form[key].strip() for key in fields}
+        values = {key:request.form.get(key,'').strip() for key in fields+specifications}
         documents = []
         for side in ('pr','po'):
             item, quantity, unit = (values[f'{side}_{key}'] for key in ('item','quantity','unit'))
+            specification = values[f'{side}_specification']
             amount = number(quantity) if len(quantity)<=24 else None
-            if (not 0<len(item)<=300 or len(unit)>40 or (quantity and (amount is None or amount<=0))
-                    or any(not char.isprintable() for char in item+unit)):
+            if (not 0<len(item)<=300 or len(unit)>40 or len(specification)>700
+                    or (quantity and (amount is None or amount<=0))
+                    or any(not char.isprintable() for char in item+unit+specification)):
                 abort(400, description='Enter an item description on both sides. Any quantity supplied must be positive.')
-            documents.append([dict(item=item,description=item,qty=quantity,unit=unit)])
+            documents.append([dict(item=item,description=specification or item,qty=quantity,unit=unit)])
         request_queries.close()
-        require_available(app.config)
-        with render_model_preparation.ready_for_processing('rf',app.config):
+        assessment=None
+        with revised_procurement.pr_po_predictor(app) as assessor:
             try:
-                result, confidence, _ = nlp_predict(*documents)
-            except RuntimeError:
+                if assessor is None:
+                    result, confidence, _ = nlp_predict(*documents)
+                else:
+                    from pr_po_model_assessment import display as display_model_assessment
+                    assessed=assessor.assess(*documents)
+                    result,confidence=assessed['document']['label'],assessed['document']['score']
+                    assessment=display_model_assessment(assessed,*documents)
+            except (RuntimeError,ValueError):
                 abort(503, description='The approved model could not complete this preview.')
         comparison = compare(*documents)
-        preview = dict(result=result,confidence=confidence,display=revised_procurement.verification_display(
+        preview = dict(result=result,confidence=confidence,assessment=assessment,display=revised_procurement.verification_display(
             {'result':result},*documents,current_comparison=comparison))
     response = app.make_response(render_template('nlp_prediction_preview.html',active='nlp',
                         title='PR–PO Prediction Preview',values=values,preview=preview))
@@ -4497,7 +4515,7 @@ def health():
     return {
         'application': 'ready' if ready else 'degraded',
         'inference_enabled': inference_on,
-        'nlp_runtime': app.config.get('PSMS_NLP_RUNTIME','legacy'),
+        'nlp_runtime': (model_state.get('manifest') or {}).get('runtime') or app.config.get('PSMS_NLP_RUNTIME','legacy'),
         'inference_release_id': app.config.get('_PSMS_INFERENCE_RELEASE_ID') if inference_on else None,
         'database': database_ok,
         'tesseract': tesseract_ok,

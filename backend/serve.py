@@ -29,6 +29,9 @@ def main():
         if application.debug:
             raise RuntimeError('The production WSGI launcher refuses debug mode.')
     start_sampler()
+    if application.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+        from render_model_preparation import state
+        state('rf', application.config, start=True)
     serve(application, **settings)
 
 

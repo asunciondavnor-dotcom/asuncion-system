@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'pr_po_verification_ui.html' import result_summary,findings_table with context %}
+{% from 'pr_po_verification_ui.html' import result_summary,findings_table,model_assessment,source_approval_summary with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 <section class="card">
@@ -12,6 +12,7 @@
       <fieldset class="stack">
         <legend>{{label}}</legend>
         <label>Item description<input name="{{side}}_item" maxlength="300" required value="{{values.get(side+'_item','')}}"></label>
+        <label>Specifications<input name="{{side}}_specification" maxlength="700" value="{{values.get(side+'_specification','')}}"></label>
         <label>Quantity<input name="{{side}}_quantity" maxlength="24" type="text" inputmode="decimal" value="{{values.get(side+'_quantity','')}}"></label>
         <label>Unit<input name="{{side}}_unit" maxlength="40" value="{{values.get(side+'_unit','')}}"></label>
       </fieldset>
@@ -22,9 +23,13 @@
 </section>
 {% if preview %}
 <section class="card section-gap" id="prediction-preview-result" aria-label="Prediction result">
-  {{result_summary(preview.display,preview.result,preview.confidence)}}
+  {{result_summary(preview.display,preview.result,preview.confidence,preview.assessment|default(none))}}
+  {% if preview.assessment %}{{model_assessment(preview.assessment)}}
+  <details><summary>View source evidence</summary>{{source_approval_summary(preview.display)}}{{findings_table(preview.display)}}</details>
+  {% else %}
   {% if preview.display.model_disagreement %}<p class="notice">The model disagrees with the source match.</p>{% endif %}
   {{findings_table(preview.display)}}
+  {% endif %}
 </section>
 {% endif %}
 {% endblock %}
