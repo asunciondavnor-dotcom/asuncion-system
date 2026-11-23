@@ -114,6 +114,12 @@ def photographed_ppmp_items(path, deadline=None):
     import pytesseract
     from aoq_flexible import _configure_tesseract
     from offline_ocr_mapper import raster_memory_scope
+    from contextlib import nullcontext
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    import os
+
+    render_budget=os.environ.get('PSMS_RENDER_OCR_BUDGET')=='1'
     def timeout(seconds):
         remaining=seconds if deadline is None else min(seconds,deadline-time.perf_counter())
         if remaining<=0:raise TimeoutError('Item recovery reached the processing deadline.')
@@ -121,13 +127,22 @@ def photographed_ppmp_items(path, deadline=None):
     with Image.open(path) as original:
         if original.width<=original.height or original.width*original.height>4_000_000 or getattr(original,'n_frames',1)!=1:return []
         _configure_tesseract()
-        with raster_memory_scope(original.width*original.height):
+        scratch=TemporaryDirectory(prefix='ppmp-ocr-') if render_budget else nullcontext(None)
+        with raster_memory_scope(original.width*original.height), scratch as directory:
+            def ocr_input(raster):
+                if directory is None:return raster
+                # Keep the exact grayscale pixels and avoid re-encoding PNG on a throttled CPU.
+                target=Path(directory)/'input.pgm'
+                raster.save(target,format='PPM')
+                return str(target)
+
             image=ImageOps.exif_transpose(original).convert('L')
-            data=pytesseract.image_to_data(image.crop((0,0,image.width,int(image.height*.49))),
-                        config='--oem 3 --psm 11',output_type=pytesseract.Output.DICT,timeout=timeout(18))
+            header=ocr_input(image.crop((0,0,image.width,int(image.height*.49))))
+            data=pytesseract.image_to_data(header,config='--oem 3 --psm 11',
+                        output_type=pytesseract.Output.DICT,timeout=timeout(32 if render_budget else 18))
             if not re.search(r'project\s+procurement',' '.join(data['text']),re.I):return []
             anchors={}
-            for index, value in enumerate(data['text'][:-1]):
+            for index,value in enumerate(data['text'][:-1]):
                 col=data['text'][index+1]
                 if value.casefold()=='column' and col in ('2','3','4') and abs(data['top'][index]-data['top'][index+1])<max(5,data['height'][index]):
                     anchors[col]=(data['left'][index],data['top'][index]+data['height'][index],data['height'][index])
@@ -141,17 +156,22 @@ def photographed_ppmp_items(path, deadline=None):
             def prepared_crop(box):
                 pixels=np.array(ImageOps.autocontrast(image.crop(box)))
                 mask=pixels<np.percentile(pixels,30)
-                pixels[ndimage.binary_opening(mask,structure=np.ones((1,19))) |
-                       ndimage.binary_opening(mask,structure=np.ones((25,1)))]=255
+                # An odd horizontal or vertical opening is a one-dimensional
+                # minimum filter followed by a maximum filter on the same axis.
+                def line_opening(size,axis):
+                    eroded=ndimage.minimum_filter1d(mask,size,axis=axis,mode='constant')
+                    return ndimage.maximum_filter1d(eroded,size,axis=axis,mode='constant')
+                pixels[line_opening(19,1) | line_opening(25,0)]=255
                 return ImageOps.expand(Image.fromarray(pixels).resize((pixels.shape[1]*2,pixels.shape[0]*2)),15,'white')
             if right-left<30 or bottom-top<30:return []
             crop=prepared_crop((left,top,right,bottom))
-            lines=pytesseract.image_to_string(crop,config='--oem 3 --psm 6',timeout=timeout(15)).splitlines()
+            lines=pytesseract.image_to_string(ocr_input(crop),config='--oem 3 --psm 6',
+                                              timeout=timeout(28 if render_budget else 15)).splitlines()
             checks=[]
             try:
                 check_crop=prepared_crop((max(0,left-2),top+1,right-5,bottom-10))
-                checks=pytesseract.image_to_string(check_crop,config='--oem 3 --psm 6',
-                                                     timeout=timeout(13)).splitlines()
+                checks=pytesseract.image_to_string(ocr_input(check_crop),config='--oem 3 --psm 6',
+                                                     timeout=timeout(26 if render_budget else 13)).splitlines()
             except (RuntimeError,TimeoutError):
                 pass
     def item_lines(values):
