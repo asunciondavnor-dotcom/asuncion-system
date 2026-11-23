@@ -476,6 +476,17 @@ def workspace_sources(api):
         order by s.created_at desc,s.id desc limit 100""",(durable._uid(),api['is_admin']()))
 
 
+def workspace_source(api,sid):
+    if not isinstance(sid,str) or len(sid)!=36:
+        return None
+    try:
+        identifier = str(uuid.UUID(sid))
+    except ValueError:
+        return None
+    return api['q']("select id from psms_documents.sources where id=? and (owner_id=? or ?) and kind='ppmp'",
+                    (identifier,durable._uid(),api['is_admin']()),one=True)
+
+
 def review(api,sid):
     sid=str(sid)
     admin=api['is_admin']()
@@ -581,7 +592,7 @@ def review(api,sid):
     elif selected in CATEGORIES:
         where+=" and ppmp_category=? and status<>'CATEGORY_REVIEW'";params.append(selected)
     if search:
-        where+=" and strpos(lower(concat_ws(' ',temp_code,fields_json)),lower(?))>0";params.append(search)
+        where+=" and strpos(lower(concat_ws(' ','ITEM-'||lpad(id::text,greatest(6,length(id::text)),'0'),temp_code,fields_json)),lower(?))>0";params.append(search)
     summary=api['q']('''select count(*) total,
         count(*) filter(where ppmp_category='DBM' and status<>'CATEGORY_REVIEW') dbm,
         count(*) filter(where ppmp_category='NON-DBM' and status<>'CATEGORY_REVIEW') non_dbm,
@@ -598,11 +609,14 @@ def review(api,sid):
         value['confidence']=api['_json_dict'](row['confidence_json'])
         value['suggestion']=value['confidence'].get('_category_suggestion') or dict(category=category(row['ppmp_category']),evidence='existing saved category')
         value['source_number']=(value['confidence'].get('_source_evidence') or {}).get('item_number','')
+        value['item_reference']=f"ITEM-{row['id']:06d}"
         items.append(value)
     def workspace_url(**changes):
         values={key:request.args[key] for key in request.args if key in ('q','sort','category','page','sheet') or key.startswith('h_')}
         values.update(changes)
         return url_for('ppmp_intake_review',sid=sid,**values)
+    if request.method=='GET' and not request.headers.get('X-PSMS-Fragment') and session.get('ppmp_intake_source_id')!=sid:
+        session['ppmp_intake_source_id']=sid
     return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',source=source,
         uploads=workspace_sources(api),
         items=items,labels=api['ppmp_review_labels'](),categories=CATEGORIES,page=page,has_next=has_next,

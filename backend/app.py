@@ -2141,12 +2141,20 @@ def ppmp_ocr_upload(ptype):
 def ppmp_intake():
     if request.method=='POST':
         return durable_ocr.protected(item_intake.upload,globals())
+    if len(request.args.getlist('source'))>1:
+        abort(400, description='Choose one saved document.')
+    selected = request.args.get('source')
+    remembered = session.get('ppmp_intake_source_id')
+    source = item_intake.workspace_source(globals(),selected if selected is not None else remembered)
+    if source:
+        return redirect(url_for('ppmp_intake_review',sid=source['id']))
+    if selected is not None:
+        abort(404)
+    if remembered:
+        session.pop('ppmp_intake_source_id',None)
     uploads = item_intake.workspace_sources(globals())
     if uploads:
-        selected = request.args.get('source')
-        source = next((row for row in uploads if str(row['id']) == selected), None) if selected else uploads[0]
-        if source is None:abort(404)
-        return redirect(url_for('ppmp_intake_review',sid=source['id']))
+        return redirect(url_for('ppmp_intake_review',sid=uploads[0]['id']))
     return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',source=None,uploads=uploads)
 
 
