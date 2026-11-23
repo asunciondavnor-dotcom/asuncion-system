@@ -545,23 +545,25 @@ def detail(api, sid):
             if change['temp_code']:
                 references.add(change['temp_code'])
             if change['at']:
-                result['events'].append(dict(at=change['at'], action='Item correction and category recorded', module='PPMP',
+                result['events'].append(dict(at=change['at'], action='Item correction and category recorded' if change['category'] else 'Item details verified', module='PPMP',
                     reference=change['temp_code'], actor=change['actor'], revision=change['revision'],
                     previous_category=change['previous_category'], category=change['category']))
         assignments = con.execute('''SELECT d.temp_code,
                 d.confidence_json::jsonb->'_category_assignment'->>'at' AS at,
                 d.confidence_json::jsonb->'_category_assignment'->>'by' AS actor,
                 d.confidence_json::jsonb->'_category_assignment'->>'category' AS category,
-                d.confidence_json::jsonb->'_category_assignment'->>'evidence' AS evidence
+                d.confidence_json::jsonb->'_category_assignment'->>'evidence' AS evidence,
+                d.confidence_json::jsonb->'_category_assignment'->>'method' AS method
             FROM public.ppmp_ocr_drafts d WHERE d.source_id=? AND d.owner_id=?
                 AND jsonb_typeof(d.confidence_json::jsonb->'_category_assignment')='object'
-                AND d.confidence_json::jsonb->'_category_assignment'->>'method'='automatic'
+                AND d.confidence_json::jsonb->'_category_assignment'->>'method' IN ('automatic','approval')
                 AND nullif(d.confidence_json::jsonb->'_category_assignment'->>'at','') IS NOT NULL
             ORDER BY ''' + _legacy_sort("d.confidence_json::jsonb->'_category_assignment'->>'at'") + ' DESC,d.id DESC LIMIT 300', (sid, uid)).fetchall()
         for assignment in assignments:
             if assignment['temp_code']:
                 references.add(assignment['temp_code'])
-            result['events'].append(dict(at=assignment['at'], action='Automatic category assignment recorded',
+            action=f"Item approved and assigned to {assignment['category']}" if assignment['method']=='approval' else 'Automatic category assignment recorded'
+            result['events'].append(dict(at=assignment['at'], action=action,
                 module='PPMP', reference=assignment['temp_code'], actor=assignment['actor'],
                 category=assignment['category'], evidence=assignment['evidence']))
         endpoints = {'ppmp': 'ppmp_review', 'app': 'app_review', 'pr': 'pr_review', 'aoq': 'aoq_review',

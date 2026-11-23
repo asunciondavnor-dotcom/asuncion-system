@@ -362,10 +362,10 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
                     proposed,reason=next(iter(matches)),'exact existing procurement catalog evidence'
             confidence['_category_suggestion']=dict(category=proposed,evidence=reason)
             confidence['_category_confirmed']=False
-            confidence['_category_assignment']=dict(category=proposed,method='automatic' if proposed else 'unresolved',evidence=reason,at=api['now']())
+            confidence['_category_assignment']=dict(category=None,method='awaiting_approval',at=api['now']())
             confidence['_extraction_identity']=key
-            summary[proposed or 'unclassified']+=1
-            status='NEEDS_REVIEW' if proposed else 'CATEGORY_REVIEW'
+            summary['unclassified']+=1
+            status='NEEDS_REVIEW'
             matches=prior.get(key,[])
             if matches:
                 draft=matches[0]
@@ -377,20 +377,19 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
                     before_fields=api['_json_dict'](draft['fields_json']),before_category=draft['ppmp_category'])]
                 con.execute('''update ppmp_ocr_drafts set ppmp_category=?,fields_json=?,confidence_json=?,
                     status=?,reviewed=false,updated_at=?,revision=revision+1 where id=?''',
-                    (proposed or 'UNASSIGNED',durable.payload(fields),durable.payload(confidence),status,api['now'](),draft['id']))
+                    ('UNASSIGNED',durable.payload(fields),durable.payload(confidence),status,api['now'](),draft['id']))
                 summary['updated']+=1;continue
             did=con.execute(f'''insert into ppmp_ocr_drafts(upload_token,temp_code,ppmp_category,fields_json,confidence_json,
                 average_confidence,source_filename,raw_ocr_text,extraction_method,status,reviewed,created_by,created_at,updated_at,owner_id,source_id)
                 values(?,?,?,?,?,?,?,?,?,'{status}',false,?,?,?,?,?) returning id''',
-                (str(source_id),'OCR-'+str(uuid.uuid4()),proposed or 'UNASSIGNED',durable.payload(fields),durable.payload(confidence),
+                (str(source_id),'OCR-'+str(uuid.uuid4()),'UNASSIGNED',durable.payload(fields),durable.payload(confidence),
                  float(row.get('average_confidence') or 0),name,state['text'],state['method'],session['username'],api['now'](),api['now'](),uid,str(source_id))).fetchone()['id']
             con.execute('update ppmp_ocr_drafts set temp_code=? where id=?',(f'OCR-TEMP-{did:06d}',did))
             summary['inserted']+=1
         result_status=processing.complete(con,uid,run_id,state,summary)
-        durable.audit(api,con,'Saved Categorized Extraction Drafts','PPMP',source_id)
+        durable.audit(api,con,'Saved Extraction Drafts for Review','PPMP',source_id)
     if rows:
         flash(f"{summary['inserted']} draft(s) saved; {summary['updated']} refreshed; {summary['preserved']} preserved. Official review and approval remain separate.",'success')
-        if summary['unclassified']:flash(f"{summary['unclassified']} item(s) need classification. Other categorized drafts are already available.",'info')
         if result_status=='INCOMPLETE':flash('Extraction is incomplete. Review the retained uncertain source regions.','info')
     else:flash('Document saved. Extraction incomplete: no reliable procurement items were identified. Reprocess or review the original source.','info')
     return redirect(destination(source_id))
@@ -499,6 +498,9 @@ def review(api,sid):
         if action=='approve':
             if not admin:abort(403)
             if request.form.get('confirm_approval')!='yes':abort(400)
+            destination=category(request.form.get('category'))
+            if len(request.form.getlist('category'))!=1 or not destination:
+                abort(400,description='Choose DBM, NON-DBM or LIB before approving this item.')
             with durable.transaction(api) as (con,uid):
                 draft=con.execute('select * from ppmp_ocr_drafts where id=? and source_id=? for update',
                                   (durable.revision(request.form.get('draft_id')),sid)).fetchone()
@@ -508,23 +510,28 @@ def review(api,sid):
                         or draft['status']!='REVIEWED' or not draft['reviewed']
                         or not confidence.get('_intake_verified') or confidence.get('_item_approval')):
                     abort(409,description='Reopen the latest verified item before approving.')
-                confidence['_item_approval']=dict(by=uid,at=api['now']())
-                con.execute('update ppmp_ocr_drafts set confidence_json=?,updated_at=?,revision=revision+1 where id=?',
-                            (durable.payload(confidence),api['now'](),draft['id']))
-                durable.audit(api,con,'Approved Uploaded Item','PPMP',draft['id'])
-            flash('Official item approved. It is available in its PPMP category.','success')
+                fields=api['_json_dict'](draft['fields_json'])
+                try:api['validated_ppmp_item_from_review'](fields,destination)
+                except ValueError as error:abort(422,description=str(error))
+                stamp=api['now']()
+                confidence['_item_approval']=dict(by=uid,at=stamp,category=destination)
+                confidence['_category_confirmed']=True
+                confidence['_category_assignment']=dict(category=destination,method='approval',by=uid,at=stamp)
+                con.execute('update ppmp_ocr_drafts set ppmp_category=?,confidence_json=?,updated_at=?,revision=revision+1 where id=?',
+                            (destination,durable.payload(confidence),stamp,draft['id']))
+                api['log']('Approved Uploaded Item','PPMP',str(draft['id']),'Assigned PPMP category '+destination,connection=con)
+            flash(f'Official item approved and assigned to {destination}.','success')
             return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
         if source['owner_id']!=durable._uid():abort(403)
         if action not in ('verify','add'):abort(400)
-        if request.form.get('confirm_category')!='yes':abort(400,description='Confirm the item category before saving.')
-        destination=category(request.form.get('category'))
-        if not destination:abort(400,description='Choose DBM, NON-DBM or LIB for this item.')
+        if request.form.get('confirm_review',request.form.get('confirm_category'))!='yes':
+            abort(400,description='Confirm that the item details match the original.')
         labels=api['ppmp_review_labels']()
         if any('field_'+str(i) not in request.form for i in range(len(labels))):abort(400)
         fields={label:request.form['field_'+str(i)] for i,label in enumerate(labels)}
         if any(len(value)>5000 for value in fields.values()):abort(400)
         fields=api['normalize_reviewed_ocr_fields'](fields)
-        try:api['validated_ppmp_item_from_review'](fields,destination)
+        try:api['validated_ppmp_item_from_review'](fields,'UNASSIGNED')
         except ValueError as error:abort(422,description=str(error))
         with durable.transaction(api) as (con,uid):
             if action=='add':
@@ -539,7 +546,7 @@ def review(api,sid):
                 did=con.execute('''insert into ppmp_ocr_drafts(upload_token,temp_code,ppmp_category,fields_json,confidence_json,
                     source_filename,extraction_method,status,reviewed,created_by,created_at,updated_at,owner_id,source_id)
                     values(?,?,?,?,?,?,?,'NEEDS_REVIEW',false,?,?,?,?,?) returning id''',
-                    (sid,'ITEM-'+uuid.uuid4().hex,destination,durable.payload(fields),durable.payload(confidence),
+                    (sid,'ITEM-'+uuid.uuid4().hex,'UNASSIGNED',durable.payload(fields),durable.payload(confidence),
                      source['filename'],'Personnel entry',session['username'],api['now'](),api['now'](),uid,sid)).fetchone()['id']
                 durable.audit(api,con,'Added Item From Saved Original','PPMP',did)
                 return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
@@ -556,14 +563,13 @@ def review(api,sid):
             if (decimal_number(fields.get('Quantity'))!=decimal_number(original.get('Quantity')) and
                     request.form.get('confirm_quantity_change')!='yes'):
                 abort(400,description='Confirm the intentional quantity difference from the extracted source.')
-            confidence['_category_confirmed']=True
-            confidence['_category_review']=dict(previous=row['ppmp_category'],assigned=destination,by=uid,at=api['now']())
+            confidence['_category_confirmed']=False
             confidence.setdefault('_review_history',[]).append(dict(
-                revision=row['revision'],previous_category=row['ppmp_category'],category=destination,
+                revision=row['revision'],
                 by=uid,at=api['now'](),before_fields=api['_json_dict'](row['fields_json']),after_fields=dict(fields)))
             confidence.update(_intake_approval_required=True,_intake_verified=True)
-            con.execute("update ppmp_ocr_drafts set ppmp_category=?,fields_json=?,confidence_json=?,status='REVIEWED',reviewed=true,reviewed_by=?,reviewed_at=?,updated_at=?,revision=revision+1 where id=?",
-                (destination,durable.payload(fields),durable.payload(confidence),session['username'],api['now'](),api['now'](),did))
+            con.execute("update ppmp_ocr_drafts set ppmp_category='UNASSIGNED',fields_json=?,confidence_json=?,status='REVIEWED',reviewed=true,reviewed_by=?,reviewed_at=?,updated_at=?,revision=revision+1 where id=?",
+                        (durable.payload(fields),durable.payload(confidence),session['username'],api['now'](),api['now'](),did))
             durable.audit(api,con,'Verified Uploaded Item','PPMP',did)
         flash('Item verified and saved for authorized approval.','success')
         return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
@@ -588,16 +594,17 @@ def review(api,sid):
     if selected_sheet:
         source_where+=' and '+sheet_expression+'=?';source_params.append(selected_sheet)
     where=source_where;params=list(source_params)
-    if selected=='UNASSIGNED':where+=" and status='CATEGORY_REVIEW'"
+    assigned="(converted or case when confidence_json IS JSON OBJECT then confidence_json::jsonb->'_item_approval' is not null else false end)"
+    if selected=='UNASSIGNED':where+=' and not '+assigned
     elif selected in CATEGORIES:
-        where+=" and ppmp_category=? and status<>'CATEGORY_REVIEW'";params.append(selected)
+        where+=' and ppmp_category=? and '+assigned;params.append(selected)
     if search:
         where+=" and strpos(lower(concat_ws(' ','ITEM-'||lpad(id::text,greatest(6,length(id::text)),'0'),temp_code,fields_json)),lower(?))>0";params.append(search)
-    summary=api['q']('''select count(*) total,
-        count(*) filter(where ppmp_category='DBM' and status<>'CATEGORY_REVIEW') dbm,
-        count(*) filter(where ppmp_category='NON-DBM' and status<>'CATEGORY_REVIEW') non_dbm,
-        count(*) filter(where ppmp_category='LIB' and status<>'CATEGORY_REVIEW') lib,
-        count(*) filter(where status='CATEGORY_REVIEW') unclassified,
+    summary=api['q'](f'''select count(*) total,
+        count(*) filter(where ppmp_category='DBM' and {assigned}) dbm,
+        count(*) filter(where ppmp_category='NON-DBM' and {assigned}) non_dbm,
+        count(*) filter(where ppmp_category='LIB' and {assigned}) lib,
+        count(*) filter(where not {assigned}) unclassified,
         count(*) filter(where converted) official
         from ppmp_ocr_drafts where '''+source_where,tuple(source_params),one=True)
     drafts=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+sorts[sort]+' limit 21 offset ?',(*params,(page-1)*20))
