@@ -148,3 +148,22 @@
 .reference-shell .sidebar .nav-parent .icon:last-child{width:1em;height:1em}
 .reference-shell :is(.nav-close,.mobile-nav-toggle) .icon{width:20px;height:20px;flex:none}
 .reference-shell .sidebar .active-dot{flex:none}
+
+/* Shared on-screen reading sizes for the signed-in workspaces. */
+@media screen{
+  .reference-shell #mainContent{font-size:1rem;line-height:1.5}
+  .reference-shell #mainContent :is(
+    label,select,textarea,input:not([type=checkbox]):not([type=radio]),
+    .btn,summary,.table td,.aoq-record-table td,.dash-table td
+  ){font-size:1rem}
+  .reference-shell #mainContent :is(.table,.aoq-record-table,.dash-table) th{font-size:.9375rem}
+  .reference-shell #mainContent :is(.badge,.muted,.dash-badge,.dash-kpi-copy b,.dash-heading>a,.aoq-record-date){
+    font-size:.875rem;line-height:1.4;
+  }
+  .reference-shell #mainContent :is(.btn,.icon-button) > svg{
+    width:1.25em;height:1.25em;flex:none;vertical-align:middle;
+  }
+  .reference-shell #mainContent :is(.btn,.icon-button):has(> svg){
+    display:inline-flex;align-items:center;gap:.45em;
+  }
+}
