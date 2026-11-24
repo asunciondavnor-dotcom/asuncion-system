@@ -53,6 +53,17 @@ def prepare():
         _assessor = checked_model()
 
 
+class SemanticEncoder:
+    """Reuse the checksum-verified MiniLM session for OCR field mapping."""
+
+    def __init__(self):
+        prepare()
+
+    def encode(self, sentences, normalize_embeddings=False):
+        # The packaged MiniLM graph produces unit vectors for both callers.
+        return assessor().encode(sentences)
+
+
 def checked_model():
     """Exercise the model with source-independent fixtures without saving records."""
     model = load()
