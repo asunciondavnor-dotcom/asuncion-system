@@ -60,13 +60,12 @@
     <label id="ocrCategoryReview" class="warning-box" hidden><input type="checkbox" id="ocrCategoryConfirmed"> I checked the original evidence and confirm this item's category is {{ptype}}. This does not approve a procurement document.</label>
     <p id="ocrConsistencyWarning" class="warning-box" role="status"></p>
     <label id="ocrSourceDifference" class="warning-box" hidden><input type="checkbox" id="ocrSourceDifferenceConfirm"> Quantity differs from the extracted source. I checked the original and confirm this intentional correction.</label>
-    <details id="ocrSourceComparison" class="ocr-source-comparison"><summary>Compare Extracted Data with Original Document</summary>
+    <details id="ocrSourceComparison" class="ocr-source-comparison"><summary>Check against the original document</summary>
       <p id="ocrDocumentMetadata" class="muted"></p><p id="ocrSourceKind"></p>
-      <div class="ocr-comparison-grid"><section><h4>Current item fields</h4><pre class="raw-ocr-pre" id="ocrStructuredData"></pre></section>
-      <section><h4>Original source</h4><a id="ocrOriginalSource" class="btn small" target="_blank" rel="noopener">Open original document</a>
+      <div class="ocr-comparison-grid"><section><h4>Original document</h4><a id="ocrOriginalSource" class="btn small" target="_blank" rel="noopener">Open original document</a>
       <iframe id="ocrSourcePreview" title="Original authorized source document" loading="lazy" hidden></iframe>
-      <p id="ocrPreviewUnavailable">Visual preview is unavailable for this format. Open the original document and compare the captured excerpt below.</p>
-      <p class="muted">Captured extraction excerpt; verify recognition against the original document.</p><pre class="raw-ocr-pre" id="ocrItemEvidence"></pre></section></div>
+      <p id="ocrPreviewUnavailable">Open the original document to compare it with the item details.</p>
+      </section><section><h4>What the system read</h4><pre class="raw-ocr-pre" id="ocrItemEvidence"></pre></section></div>
     </details>
     </div></div>
     <div class="modal-footer"><span class="muted">Review saves drafts only. Official creation and approval remain separate.</span><div class="actions"><button type="button" class="btn" data-ocr-close>Cancel</button><button class="btn primary" type="submit" id="ocrSaveReview">Save and confirm review</button></div></div>

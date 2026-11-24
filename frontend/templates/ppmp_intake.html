@@ -165,12 +165,12 @@
     </table>
   </div>
   {% endfor %}
-  {% if extraction.get('text') %}
-    {% if original_worksheets %}<details class="intake-original-full"><summary>View all text read from the file</summary>{% endif %}
+  {% if not original_worksheets %}
+    {% if extraction.get('text') %}
     <pre class="raw-ocr-pre intake-source-text">{{extraction.text}}</pre>
-    {% if original_worksheets %}</details>{% endif %}
-  {% elif not original_worksheets %}
+    {% else %}
     <p>No data was read from this file.</p>
+    {% endif %}
   {% endif %}
 </details>
 {% endif %}

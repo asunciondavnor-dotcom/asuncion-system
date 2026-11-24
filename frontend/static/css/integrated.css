@@ -132,7 +132,6 @@
 .intake-source-table caption{text-align:left;padding:8px 12px;font-weight:650;color:#184f3a}
 .intake-source-table th,.intake-source-table td{white-space:normal;overflow-wrap:anywhere}
 .intake-source-table tbody th{background:#f2f6f4}
-.intake-original-full{margin-top:16px}
 .intake-original .intake-source-text{font:inherit;line-height:1.65;color:#172b22}
 
 .intake-readable .btn:has(> .icon){display:inline-flex;align-items:center;gap:.45em;vertical-align:middle}

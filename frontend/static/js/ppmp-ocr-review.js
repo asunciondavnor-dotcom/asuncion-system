@@ -70,8 +70,6 @@
   }
   const stash = () => { if (items[index]) { items[index].fields = values(); items[index].source_changes_confirmed = differenceConfirm.checked; if(categoryConfirm)items[index].confirmed_category=categoryConfirm.checked?dialog.dataset.category:null; } };
   const selectedIds = () => [...new Set(checkboxes.filter(box => box.checked).map(box => box.value))];
-  const readableFields = fields => Object.entries(fields || {}).map(([label, value]) =>
-    `${label}:\n  ${typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : value || 'Unresolved'}`).join('\n\n');
   const moneyText = value => {
     const text = String(value ?? '').trim();
     if (!text) return 'Unresolved';
@@ -114,7 +112,6 @@
     const title = document.createElement('strong'); title.textContent = `${item.temp_id} · Item ${index + 1} of ${items.length}`;
     const state = document.createElement('span'); state.className = 'badge ' + (item.status === 'Reviewed' ? 'ok' : 'warn');
     state.textContent = item.status || 'Needs Review'; statusBox.append(title, state);
-    document.getElementById('ocrStructuredData').textContent = readableFields(item.fields);
     const evidence = item.field_confidence?._source_evidence;
     const sourceLines = [];
     if (evidence) {
@@ -164,7 +161,6 @@
     const quantity = Number(current.Quantity), cost = Number(current['Estimated Unit Cost']), budget = Number(current['Estimated Budget Allocation (Php)']);
     const mismatch = current['Estimated Unit Cost'] && Number.isFinite(quantity*cost) && Math.abs(quantity*cost-budget) > .005;
     document.getElementById('ocrConsistencyWarning').textContent = mismatch ? 'Quantity × unit cost differs from estimated budget. Correct the values before confirming.' : '';
-    document.getElementById('ocrStructuredData').textContent = readableFields(current);
   }
   function navigate(next) {
     if (saving) { itemSelect.value = String(index); return; }
