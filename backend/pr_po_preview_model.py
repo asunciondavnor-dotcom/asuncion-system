@@ -12,12 +12,13 @@ from pr_po_match_runtime import Assessor, parse_parameters
 from pr_po_match_score import CLASSIFIER_LABELS, FEATURE_WIDTH
 from pr_po_model_features import document_alignment, normalized, text_similarity
 from pr_po_substitution import ACCEPTABLE, QualifierEvidence, SubstitutionEvidence
+from pr_po_catalog_evidence import CatalogEvidence, supporting_facts
 
 
-VERSION = 'asuncion-pr-po-ensemble-verified-v4'
-PACKAGE_SCHEMA = 'PR_PO_ENSEMBLE_VERIFIED_V4'
-MAX_COMPRESSED_BYTES = 2 * 1024 * 1024
-MAX_JSON_BYTES = 12 * 1024 * 1024
+VERSION = 'asuncion-pr-po-ensemble-accepted-v5'
+PACKAGE_SCHEMA = 'PR_PO_ENSEMBLE_ACCEPTED_V5'
+MAX_COMPRESSED_BYTES = 3 * 1024 * 1024
+MAX_JSON_BYTES = 16 * 1024 * 1024
 
 
 def identity_vector(evidence, left, right):
@@ -93,11 +94,17 @@ class ItemIdentity:
 
 
 class EnsemblePreview(Assessor):
-    def __init__(self, *, identity, forest, alternate, shares, substitution, wording, qualifiers, **settings):
+    def __init__(self, *, identity, forest, alternate, shares, substitution, wording, qualifiers, catalog, broad_wording, **settings):
         super().__init__(**settings)
         self.identity = identity
         self.substitution = substitution
         self.qualifiers = QualifierEvidence(qualifiers)
+        self.catalog = CatalogEvidence(catalog)
+        self.broad_wording = FrozenForest(broad_wording['forest'], width=160, classes=2)
+        self.broad_cutoff = float(broad_wording['cutoff'])
+        self.broad_exponent = float(broad_wording['exponent'])
+        if not 0 < self.broad_cutoff < 1 or not 0 < self.broad_exponent <= 1:
+            raise ValueError('PR_PO_BROAD_WORDING_PARAMETERS')
         self.wording = FrozenForest(wording['forest'], width=160, classes=2)
         self.wording_cutoff = float(wording['cutoff'])
         self.wording_exponent = float(wording['exponent'])
@@ -134,6 +141,17 @@ class EnsemblePreview(Assessor):
             rescored = self.match_score.assess(base, adjusted)
             if rescored['score'] > result['score']:
                 chosen, result = adjusted, rescored
+        if result['label'] != 'Acceptable':
+            support = float(self.broad_wording.predict_proba(augmented[None, :])[0, 1])
+            if support >= self.broad_cutoff:
+                additional = self.score_equivalence(base, probabilities, support ** self.broad_exponent)
+                if additional is not None:
+                    chosen, result = additional
+        if result['label'] != 'Acceptable' and len(left) == len(right):
+            aligned = [(left[i], right[j]) for i, j in document_alignment(pairs)]
+            additional = self.assess_catalog_evidence(base, probabilities, evidence, aligned)
+            if additional is not None:
+                chosen, result = additional
         if result['label'] == 'Acceptable' and len(left) == len(right) == 1:
             adjusted = self.qualifiers.assess(probabilities, left[0], right[0], evidence.vectors)
             if adjusted is not probabilities:
@@ -141,6 +159,22 @@ class EnsemblePreview(Assessor):
                 if assessed['score'] < result['score']:
                     return adjusted, assessed
         return chosen, result
+
+    def assess_catalog_evidence(self, base, probabilities, evidence, aligned):
+        if not aligned or not all(supporting_facts(a, b) for a, b in aligned):
+            return None
+        if any(self.qualifiers.assess(probabilities, a, b, evidence.vectors) is not probabilities for a, b in aligned):
+            return None
+        support = self.catalog.confidence(aligned, evidence.vectors, self._vectors)
+        if support < self.catalog.cutoff:
+            return None
+        return self.score_equivalence(base, probabilities, support ** self.catalog.exponent)
+
+    def score_equivalence(self, base, probabilities, share):
+        adjusted = probabilities * (1 - share)
+        adjusted[ACCEPTABLE] += share
+        match = self.match_score.assess(base, adjusted)
+        return (adjusted, match) if match['label'] == 'Acceptable' else None
 
     def blend(self, base, augmented):
         staged, forest, alternate = self.shares
@@ -163,4 +197,4 @@ def load(path, expected_sha256, encode):
     return EnsemblePreview(**parse_parameters(data['base']), encode=encode, version=VERSION,
                            identity=ItemIdentity(data['identity']), forest=FrozenForest(data['forest'], width=160, classes=4),
                            alternate=CalibratedLinearClassifier(data['alternate'], CLASSIFIER_LABELS, FEATURE_WIDTH),
-                           shares=data['shares'], substitution=SubstitutionEvidence(data['substitution']), wording=data['wording'], qualifiers=data['qualifiers'])
+                           shares=data['shares'], substitution=SubstitutionEvidence(data['substitution']), wording=data['wording'], qualifiers=data['qualifiers'], catalog=data['catalog'], broad_wording=data['broad_wording'])

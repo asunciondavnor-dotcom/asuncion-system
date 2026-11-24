@@ -4,7 +4,7 @@
 # registry integration. Override APPROVED_MODEL_IMAGE with the reviewed mirror.
 ARG APPROVED_MODEL_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:ab17ebc3a697568a4a3fcafd7af686d7e7e258bda36c7b7e33817da9007356ee
 ARG PR_PO_MODEL_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:f6217fd6ee05fcf3423acae0df979f3b69deb82d24d3284cc8359c304cf035a2
-ARG PR_PO_PREVIEW_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:96f1774ec5fc994231e655b9125a4de4d74552e618d73867e7adff4bb67dd6cd
+ARG PR_PO_PREVIEW_IMAGE=ghcr.io/asunciondavnor-dotcom/asuncion-approved-models@sha256:615f550fccc3bcda09d3e3e28cc004c517fcce9f4d5daeab52c434e02180d6d7
 FROM ${APPROVED_MODEL_IMAGE} AS approved_models
 FROM ${PR_PO_MODEL_IMAGE} AS pr_po_model
 FROM ${PR_PO_PREVIEW_IMAGE} AS pr_po_preview
@@ -44,8 +44,8 @@ RUN pip install --no-cache-dir --only-binary=:all: --no-deps \
 COPY --from=source /runtime/ /app/
 COPY --from=approved_models --chmod=0555 /inference_releases/nlp-online-original-v2/ /app/inference_releases/nlp-online-original-v2/
 COPY --from=pr_po_model --chmod=0555 /inference_releases/asuncion-minilm-linear-svm-v1/ /app/inference_releases/asuncion-minilm-linear-svm-v1/
-COPY --from=pr_po_preview /inference_releases/asuncion-pr-po-ensemble-verified-v4/ensemble.json.gz /app/inference_releases/asuncion-pr-po-ensemble-verified-v4/ensemble.json.gz
-RUN chmod 0555 /app/inference_releases/asuncion-pr-po-ensemble-verified-v4 && chmod 0444 /app/inference_releases/asuncion-pr-po-ensemble-verified-v4/ensemble.json.gz /app/certs/supabase-ca.crt
+COPY --from=pr_po_preview /inference_releases/asuncion-pr-po-ensemble-accepted-v5/ensemble.json.gz /app/inference_releases/asuncion-pr-po-ensemble-accepted-v5/ensemble.json.gz
+RUN chmod 0555 /app/inference_releases/asuncion-pr-po-ensemble-accepted-v5 && chmod 0444 /app/inference_releases/asuncion-pr-po-ensemble-accepted-v5/ensemble.json.gz /app/certs/supabase-ca.crt
 USER psms
 RUN python -B deploy/render_image_check.py
 EXPOSE 10000

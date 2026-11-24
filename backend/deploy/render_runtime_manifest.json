@@ -172,8 +172,10 @@
     "pr_po_identity_features.py": "e06862a63b405af00abd6f05245bcbab63bb49d68154f16141b5dea5298ae3f3",
     "pr_po_match_runtime.py": "42abf5ebeed02359cfa3ba76c4e7b9ac6b73c4a68702e93ce831183b12145ed6",
     "pr_po_match_score.py": "072a00fb9aa5c33e99628e3ae036b7ebdeaabecf627fd8bb6c8f050e8a2f6854",
-    "pr_po_preview_model.py": "e18621277473e4cb876e2dde76b3ca8b4bf087da5cda06b7f4b549c76012a92a",
-    "pr_po_preview_release.py": "fe2f7d66f3ec537efc2315991379cd49845f191247b251b5057f9b96e64b58bf",
-    "pr_po_substitution.py": "939206df0a81fd7d3c4c12421c49e35326fd91df1c17d94ff0b687dfc46d4128"
+    "pr_po_preview_model.py": "ab169d224dd97a7a40ecf0af28dfe61a5d329f8dae41f1aa71bc65823641526d",
+    "pr_po_preview_release.py": "a62b9aae07892eaeec6a03b91fdbeead4bd34d57b648f7d12f33cbc91fb0a7e6",
+    "pr_po_substitution.py": "939206df0a81fd7d3c4c12421c49e35326fd91df1c17d94ff0b687dfc46d4128",
+    "pr_po_catalog_evidence.py": "b191b7a21a19a78963e926bba953d68a2df3f099d70cc50433f6717669b82387",
+    "pr_po_catalog_text_features.py": "1f108d85cfd90c367b1292ab6d2742bda03449a88b35f646a1b1ddc940fd9427"
   }
 }

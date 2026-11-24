@@ -7,7 +7,7 @@ from pr_po_preview_model import VERSION, load
 from pr_po_release import ROOT
 
 
-PARAMETERS_SHA256 = '863b8bed6fc90218d45dc3b858b45122c8c0e72811499e99e142562d7b1727a0'
+PARAMETERS_SHA256 = '73554185362f6e54a79597ca75bca77ad439afa2f58ac99514d5ec34c9c10905'
 NAME = 'MiniLM PR–PO ensemble'
 _model = None
 
