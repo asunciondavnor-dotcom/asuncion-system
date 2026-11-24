@@ -53,8 +53,8 @@ class CalibratedLinearClassifier:
 
 
 class LinearLinker:
-    def __init__(self, data):
-        self.coef = _array(data['coef'],(4,))
+    def __init__(self, data, width=4):
+        self.coef = _array(data['coef'],(width,))
         self.intercept = _array(data['intercept'],(1,))[0]
 
     def decision_function(self, rows):

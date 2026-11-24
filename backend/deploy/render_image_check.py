@@ -34,8 +34,12 @@ def main():
     model_name = None
     if os.environ.get('PSMS_RENDER_PR_PO_MODEL') == '1':
         from pr_po_release import VERSION, checked_model
-        checked_model()
+        active_model = checked_model()
         model_name = VERSION
+        if os.environ.get('PSMS_RENDER_PR_PO_PREVIEW') == '1':
+            from pr_po_preview_release import checked_model as checked_preview
+            candidate_model = checked_preview(active_model.encode)
+            print(json.dumps({'candidate': candidate_model.version, 'preview_cases_passed': 4}))
     print(json.dumps({'files_verified': 28, 'native_ocr': True,
         'pr_po_model': model_name, 'runtime_model_downloads': False, 'database_contacted': False}))
 

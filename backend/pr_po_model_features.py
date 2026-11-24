@@ -32,10 +32,12 @@ def normalized(value):
     return ' '.join(str(value or '').lower().split())
 
 
-def unit(value):
+def unit(value, *, pack_aliases=False):
     aliases = {'pc': 'piece', 'pcs': 'piece', 'pieces': 'piece', 'reams': 'ream', 'units': 'unit',
                'rolls': 'roll', 'sets': 'set', 'bottles': 'bottle', 'pairs': 'pair', 'packs': 'pack'}
     key = normalized(value).strip('.')
+    if pack_aliases and key in ('boxes', 'cartons'):
+        return {'boxes': 'box', 'cartons': 'carton'}[key]
     return aliases.get(key, key)
 
 
@@ -55,12 +57,13 @@ def numeric_tokens(value):
     return tokens
 
 
-def effective_quantity(line):
+def effective_quantity(line, *, pack_aliases=False):
     specification = normalized(line.specification)
     match = PACK.search(specification)
-    if match and unit(line.unit) == match[2] and line.quantity:
+    resolved_unit = unit(line.unit, pack_aliases=pack_aliases)
+    if match and resolved_unit == match[2] and line.quantity:
         return line.quantity * int(match[1]), 'piece', PACK.sub('', specification).strip(' ;,')
-    return line.quantity, unit(line.unit), specification
+    return line.quantity, resolved_unit, specification
 
 
 def specification_constraints(requested, offered):
@@ -98,9 +101,9 @@ def embedding_inputs(cases):
     return values
 
 
-def line_features(pr, po, vectors):
-    pq, pu, pr_spec = effective_quantity(pr)
-    oq, ou, po_spec = effective_quantity(po)
+def line_features(pr, po, vectors, *, pack_aliases=False):
+    pq, pu, pr_spec = effective_quantity(pr, pack_aliases=pack_aliases)
+    oq, ou, po_spec = effective_quantity(po, pack_aliases=pack_aliases)
     left, right = numeric_tokens(pr_spec), numeric_tokens(po_spec)
     quantities = bool(pq and oq)
     second = set(normalized(po.name).split())

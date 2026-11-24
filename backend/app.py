@@ -70,6 +70,8 @@ configure_nlp_runtime(app, BASE_DIR)
 import render_model_preparation
 from pr_po_release import configure as configure_pr_po_release
 configure_pr_po_release(app.config)
+app.config['PR_PO_ENSEMBLE_PREVIEW'] = bool(app.config.get('PR_PO_LINEAR_MODEL_ENABLED')
+                                         and os.environ.get('PSMS_RENDER_PR_PO_PREVIEW') == '1')
 app.config['RENDER_MODEL_PREPARATION'] = render_model_preparation.enabled(app.config)
 app.config['PR_PO_ITEM_COMPARISON_ENABLED'] = os.environ.get('PSMS_ITEM_COMPARISON_ENABLED', '1') == '1'
 durable_ocr.register(app)
@@ -3682,6 +3684,10 @@ def nlp_algorithms():
 def nlp_prediction_preview():
     if not is_admin():
         abort(403)
+    candidate = request.args.get('candidate') == '1'
+    if candidate and not app.config.get('PR_PO_ENSEMBLE_PREVIEW'):
+        abort(404)
+    match = None
     fields = ('pr_item','pr_quantity','pr_unit','po_item','po_quantity','po_unit')
     specifications = ('pr_specification','po_specification')
     values = {}
@@ -3707,6 +3713,9 @@ def nlp_prediction_preview():
         assessment=None
         with revised_procurement.pr_po_predictor(app) as assessor:
             try:
+                if candidate:
+                    from pr_po_preview_release import assessor as preview_assessor
+                    assessor = preview_assessor()
                 if assessor is None:
                     result, confidence, _ = nlp_predict(*documents)
                 else:
@@ -3714,13 +3723,17 @@ def nlp_prediction_preview():
                     assessed=assessor.assess(*documents)
                     result,confidence=assessed['document']['label'],assessed['document']['score']
                     assessment=display_model_assessment(assessed,*documents)
+                    if candidate:
+                        from pr_po_model_assessment import document_result
+                        result, confidence = document_result(assessed)
+                        match = assessed['match']
             except (RuntimeError,ValueError):
                 abort(503, description='The approved model could not complete this preview.')
         comparison = compare(*documents)
         preview = dict(result=result,confidence=confidence,assessment=assessment,display=revised_procurement.verification_display(
             {'result':result},*documents,current_comparison=comparison))
     response = app.make_response(render_template('nlp_prediction_preview.html',active='nlp',
-                        title='PR–PO Prediction Preview',values=values,preview=preview))
+                        title='PR–PO Prediction Preview',values=values,preview=preview,candidate=candidate,match=match))
     response.headers['Cache-Control'] = 'private, no-store'
     return response
 

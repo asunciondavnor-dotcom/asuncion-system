@@ -5,6 +5,7 @@ import math
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from pr_po_match_score import match_evidence
 from pr_po_model_features import (Line, distinguishing_words, document_alignment,
                                   document_features, line_features, name_features, normalized)
 from procurement_comparison_v1 import NAME, norm, number, project
@@ -56,6 +57,20 @@ def predictions(model, inputs):
         if not math.isfinite(score) or not 0<=score<=100:
             raise ValueError('MODEL_SCORE_INVALID')
         yield dict(label=label,score=score)
+
+
+def document_result(assessment):
+    """Keep the original confidence while the learned match band supplies the result."""
+    document = assessment['document']
+    label, confidence = document['label'], document['score']
+    if label not in LABELS or type(confidence) not in (int, float) or not 0 <= confidence <= 100:
+        raise ValueError('PR_PO_DOCUMENT_RESULT_CONTRACT')
+    if 'match' in assessment:
+        match = match_evidence(assessment['match'])
+        if match is None:
+            raise ValueError('PR_PO_MATCH_RESULT_CONTRACT')
+        label = match['label']
+    return label, confidence
 
 
 class Assessor:

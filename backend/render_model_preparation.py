@@ -46,6 +46,15 @@ def _load(kind, config):
             elif linear:
                 from pr_po_release import prepare
                 prepare()
+                if config.get('PR_PO_ENSEMBLE_PREVIEW'):
+                    from pr_po_release import assessor
+                    from pr_po_preview_release import prepare as prepare_preview
+                    try:
+                        with measure('model_preparation_pr_po_ensemble'):
+                            prepare_preview(assessor().encode)
+                    except (OSError, ValueError, RuntimeError):
+                        # The official predictor is already ready.
+                        pass
             else:
                 from nlp_runtime_selection import runtime
                 runtime(config).load_assets(config['PSMS_RETRAINED_NLP_DIR'])

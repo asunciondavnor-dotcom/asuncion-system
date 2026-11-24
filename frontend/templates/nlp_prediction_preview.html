@@ -1,11 +1,14 @@
 {% extends 'base.html' %}
-{% from 'pr_po_verification_ui.html' import result_summary,findings_table,model_assessment,source_approval_summary with context %}
+{% from 'pr_po_verification_ui.html' import result_summary,findings_table,model_assessment,source_approval_summary,outcome_badge with context %}
 {% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
 {% block content %}
 <section class="card">
   <div class="toolbar page-head"><h2>PR–PO Prediction Preview</h2><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
-  <p>Enter one item from each side to run the approved model. Leave quantity or unit blank if the source omits it. The preview saves no procurement records.</p>
-  <form method="post" action="{{url_for('nlp_prediction_preview')}}" {% if config.get('RENDER_MODEL_PREPARATION') %}data-model-preparation="{{url_for('inference_preparation',kind='rf')}}"{% endif %}>
+  {% if config.get('PR_PO_ENSEMBLE_PREVIEW') %}
+  <p><a class="btn" href="{{url_for('nlp_prediction_preview', candidate='1') if not candidate else url_for('nlp_prediction_preview')}}">{{'Test retrained model' if not candidate else 'Preview current model'}}</a></p>
+  {% endif %}
+  <p>Enter one item from each side to run {{'the retrained model for compatibility testing' if candidate else 'the approved model'}}. Leave quantity or unit blank if the source omits it. The preview saves no procurement records.</p>
+  <form method="post" action="{{url_for('nlp_prediction_preview', candidate='1') if candidate else url_for('nlp_prediction_preview')}}" {% if config.get('RENDER_MODEL_PREPARATION') %}data-model-preparation="{{url_for('inference_preparation',kind='rf')}}"{% endif %}>
     <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
     <div class="grid grid-2">
       {% for side,label in [('pr','Purchase Request'),('po','Purchase Order')] %}
@@ -23,7 +26,13 @@
 </section>
 {% if preview %}
 <section class="card section-gap" id="prediction-preview-result" aria-label="Prediction result">
+  {% if match %}
+  <h3>PR–PO match result</h3>
+  {{outcome_badge(match.label,match.score)}}
+  <p class="muted">Retrained model compatibility preview</p>
+  {% else %}
   {{result_summary(preview.display,preview.result,preview.confidence,preview.assessment|default(none))}}
+  {% endif %}
   {% if preview.assessment %}{{model_assessment(preview.assessment)}}
   <details><summary>View source evidence</summary>{{source_approval_summary(preview.display)}}{{findings_table(preview.display)}}</details>
   {% else %}
