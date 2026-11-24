@@ -647,7 +647,30 @@ def review(api,sid):
     return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',source=source,
         uploads=workspace_sources(api),
         items=items,labels=api['ppmp_review_labels'](),categories=CATEGORIES,page=page,has_next=has_next,
-        summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url)
+        summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url,
+        original_worksheets=extracted_worksheet_groups(extraction) if admin else [])
+
+
+def extracted_worksheet_groups(extraction):
+    """Use saved source cells so corrections never change the original preview."""
+    structured = extraction.get('structured') or {}
+    if structured.get('parser') != 'explicit-excel-columns':
+        return []
+    groups = {}
+    for item in structured.get('rows', []):
+        evidence = (item.get('field_confidence') or {}).get('_source_evidence') or {}
+        headers = evidence.get('headers')
+        cells = evidence.get('cells')
+        if not isinstance(headers, list) or not headers or not isinstance(cells, list):
+            continue
+        columns = tuple(str(header or '').strip() for header in headers)
+        worksheet = evidence.get('worksheet') or 'Worksheet'
+        group = groups.setdefault((worksheet, columns), {'name': worksheet, 'columns': columns, 'rows': []})
+        group['rows'].append({
+            'number': evidence.get('row'),
+            'cells': [cells[index] if index < len(cells) else None for index in range(len(columns))],
+        })
+    return list(groups.values())
 
 
 def source_file(api,sid):

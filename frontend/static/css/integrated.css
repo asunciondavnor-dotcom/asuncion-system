@@ -120,3 +120,17 @@
 .item-review-corrections,.item-review-evidence{margin-top:18px}
 .item-review-corrections form{margin-top:12px}
 @media(max-width:600px){.item-review-heading,.item-review-body{padding:14px}.item-review-values,.item-review-form{grid-template-columns:1fr}}
+
+/* Keep the source data and item review legible across screen sizes. */
+.intake-readable{font-size:1rem;line-height:1.5}
+.intake-readable :is(label,select,input,textarea,.btn,.document-tabs a,.table td,summary){font-size:1rem}
+.intake-readable .table th{font-size:.9375rem}
+.intake-readable :is(.badge,.document-tabs span,.document-summary span,.muted){font-size:.9375rem}
+.intake-readable summary{font-weight:650;cursor:pointer}
+.intake-original{margin-top:16px}
+.intake-original .intake-source-table{max-width:100%;overflow:auto;margin-top:14px}
+.intake-source-table caption{text-align:left;padding:8px 12px;font-weight:650;color:#184f3a}
+.intake-source-table th,.intake-source-table td{white-space:normal;overflow-wrap:anywhere}
+.intake-source-table tbody th{background:#f2f6f4}
+.intake-original-full{margin-top:16px}
+.intake-original .intake-source-text{font:inherit;line-height:1.65;color:#172b22}
