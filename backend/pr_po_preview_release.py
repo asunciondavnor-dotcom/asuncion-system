@@ -7,7 +7,7 @@ from pr_po_preview_model import VERSION, load
 from pr_po_release import ROOT
 
 
-PARAMETERS_SHA256 = 'b50732237bdfb58b760505cf1c9c842a93014bcbce874db3d9eb2ae1a2766163'
+PARAMETERS_SHA256 = 'c4fc60f2b93b0f1778883296fa20682fe056638203f4e4bc752b01183799b145'
 _model = None
 
 

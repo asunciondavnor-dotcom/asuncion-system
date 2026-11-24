@@ -54,6 +54,10 @@ class Assessor(BaseAssessor):
         features = evidence.document_input(left, right, pairs)
         return features, self.document.predict_proba([features])[0]
 
+    def assess_document(self, left, right, evidence, pairs, rows):
+        features, probabilities = self.document_probabilities(left, right, evidence, pairs)
+        return probabilities, self.match_score.assess(features, probabilities)
+
     def assess_prepared(self, left, right, evidence, *, pairs=None):
         pairs = evidence.paired_data(left, right) if pairs is None else pairs
         document_pairs = document_alignment(pairs)
@@ -67,8 +71,7 @@ class Assessor(BaseAssessor):
                   for i, j in indices]
         rows = [dict(prediction, pr_position=i + 1 if i is not None else None, po_position=j + 1 if j is not None else None)
                 for (i, j), prediction in zip(indices, predictions(self.line, inputs), strict=True)]
-        document_features, probabilities = self.document_probabilities(left, right, evidence, pairs)
+        probabilities, match = self.assess_document(left, right, evidence, pairs, rows)
         winner = int(probabilities.argmax())
         document = dict(label=str(self.document.classes_[winner]), score=float(probabilities[winner]) * 100)
-        match = self.match_score.assess(document_features, probabilities)
         return dict(schema=ASSESSMENT_VERSION, model_version=self.version, document=document, match=match, rows=rows)

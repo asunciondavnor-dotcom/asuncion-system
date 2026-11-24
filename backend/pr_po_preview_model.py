@@ -11,10 +11,11 @@ from pr_po_linear_runtime import CalibratedLinearClassifier
 from pr_po_match_runtime import Assessor, parse_parameters
 from pr_po_match_score import CLASSIFIER_LABELS, FEATURE_WIDTH
 from pr_po_model_features import document_alignment, normalized, text_similarity
+from pr_po_substitution import SubstitutionEvidence
 
 
-VERSION = 'asuncion-pr-po-ensemble-2005-v1'
-PACKAGE_SCHEMA = 'PR_PO_ENSEMBLE_PREVIEW_V1'
+VERSION = 'asuncion-pr-po-ensemble-substitution-v2'
+PACKAGE_SCHEMA = 'PR_PO_ENSEMBLE_SUBSTITUTION_V2'
 MAX_COMPRESSED_BYTES = 2 * 1024 * 1024
 MAX_JSON_BYTES = 12 * 1024 * 1024
 
@@ -92,22 +93,32 @@ class ItemIdentity:
 
 
 class EnsemblePreview(Assessor):
-    def __init__(self, *, identity, forest, alternate, shares, **settings):
+    def __init__(self, *, identity, forest, alternate, shares, substitution, **settings):
         super().__init__(**settings)
         self.identity = identity
+        self.substitution = substitution
         self.forest = forest
         self.alternate = alternate
         self.shares = np.asarray(shares)
         if self.shares.shape != (3,) or not np.all(self.shares >= 0) or not np.isclose(self.shares.sum(), 1):
             raise ValueError('PR_PO_PREVIEW_BLEND_CONTRACT')
 
-    def document_probabilities(self, left, right, evidence, pairs):
+    def document_inputs(self, left, right, evidence, pairs):
         base = evidence.document_input(left, right, pairs)
         positions = document_alignment(pairs)
         identity = np.asarray([identity_vector(evidence, left[i], right[j]) for i, j in positions])
         augmented = np.concatenate((base, self.identity.signals(identity)))
+        return base, augmented
+
+    def document_probabilities(self, left, right, evidence, pairs):
+        base, augmented = self.document_inputs(left, right, evidence, pairs)
+        return base, self.blend(base[None, :], augmented[None, :])[0]
+
+    def assess_document(self, left, right, evidence, pairs, rows):
+        base, augmented = self.document_inputs(left, right, evidence, pairs)
         probabilities = self.blend(base[None, :], augmented[None, :])[0]
-        return base, probabilities
+        return probabilities, self.substitution.assess(self.match_score, base, augmented, probabilities,
+                                                       left, right, pairs, evidence, rows, identity_vector)
 
     def blend(self, base, augmented):
         staged, forest, alternate = self.shares
@@ -129,4 +140,5 @@ def load(path, expected_sha256, encode):
         raise ValueError('PR_PO_PREVIEW_PACKAGE_CONTRACT')
     return EnsemblePreview(**parse_parameters(data['base']), encode=encode, version=VERSION,
                            identity=ItemIdentity(data['identity']), forest=FrozenForest(data['forest'], width=160, classes=4),
-                           alternate=CalibratedLinearClassifier(data['alternate'], CLASSIFIER_LABELS, FEATURE_WIDTH), shares=data['shares'])
+                           alternate=CalibratedLinearClassifier(data['alternate'], CLASSIFIER_LABELS, FEATURE_WIDTH),
+                           shares=data['shares'], substitution=SubstitutionEvidence(data['substitution']))
