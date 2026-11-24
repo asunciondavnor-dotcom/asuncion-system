@@ -44,8 +44,8 @@ RUN pip install --no-cache-dir --only-binary=:all: --no-deps \
 COPY --from=source /runtime/ /app/
 COPY --from=approved_models --chmod=0555 /inference_releases/nlp-online-original-v2/ /app/inference_releases/nlp-online-original-v2/
 COPY --from=pr_po_model --chmod=0555 /inference_releases/asuncion-minilm-linear-svm-v1/ /app/inference_releases/asuncion-minilm-linear-svm-v1/
-COPY --from=pr_po_preview --chmod=0444 /inference_releases/asuncion-pr-po-ensemble-2005-v1/ensemble.json.gz /app/inference_releases/asuncion-pr-po-ensemble-2005-v1/ensemble.json.gz
-RUN chmod 0444 /app/certs/supabase-ca.crt
+COPY --from=pr_po_preview /inference_releases/asuncion-pr-po-ensemble-2005-v1/ensemble.json.gz /app/inference_releases/asuncion-pr-po-ensemble-2005-v1/ensemble.json.gz
+RUN chmod 0555 /app/inference_releases/asuncion-pr-po-ensemble-2005-v1 && chmod 0444 /app/inference_releases/asuncion-pr-po-ensemble-2005-v1/ensemble.json.gz /app/certs/supabase-ca.crt
 USER psms
 RUN python -B deploy/render_image_check.py
 EXPOSE 10000
