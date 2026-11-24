@@ -410,8 +410,8 @@ def save_extraction(api,name,ext,content,extracted,structured,*,source_id=None,r
         durable.audit(api,con,'Saved Extraction Drafts for Review','PPMP',source_id)
     if rows:
         flash(f"{summary['inserted']} draft(s) saved; {summary['updated']} refreshed; {summary['preserved']} preserved. Official review and approval remain separate.",'success')
-        if result_status=='INCOMPLETE':flash('Extraction is incomplete. Review the retained uncertain source regions.','info')
-    else:flash('Document saved. Extraction incomplete: no reliable procurement items were identified. Reprocess or review the original source.','info')
+        if result_status=='INCOMPLETE':flash('Some details may be missing. Compare the items with the original file.','info')
+    else:flash('File saved. No items were found. Read the file again or add items from the original.','info')
     return redirect(destination(source_id))
 
 
@@ -429,7 +429,7 @@ def capture_upload(api,name,ext,content):
     with ready_for_processing(None if ext in WORKBOOKS else 'semantic',api['app'].config):
         sid,run_id=processing.capture(api,name,ext,content)
         if run_id is None:
-            flash('This document is already saved. Existing corrections were preserved. Use Reprocess Extraction when needed.','info')
+            flash('This document is already saved. Your corrections are still saved. Choose Read file again if needed.','info')
             return redirect(url_for('ppmp_intake_review',sid=sid))
         return extract_saved(api,sid,run_id,name,ext,content)
 
@@ -447,7 +447,7 @@ def extract_saved(api,sid,run_id,name,ext,content):
                 extracted=dict(raw_text='\n'.join(item['fields']['Item Name'] for item in recovered),
                                extraction_method='OCR of numbered PPMP item column')
                 structured=dict(rows=recovered,direct_recovery=True,warnings=[
-                    'Compare this OCR text with the original and verify each item, quantity and budget before approval.'])
+                    'Compare the items with the original file. Check each name, quantity and budget before approval.'])
                 return save_extraction(api,name,ext,content,extracted,structured,source_id=sid,run_id=run_id,
                     timings=dict(extraction_seconds=time.perf_counter()-started,mapping_seconds=0))
             extracted=api['extract_aoq_document'](path);native_seconds=time.perf_counter()-started
@@ -480,7 +480,7 @@ def reprocess(api,sid):
     with ready_for_processing(None if original['extension'] in WORKBOOKS else 'semantic',api['app'].config):
         source,run_id=processing.begin_existing(api,str(sid))
         if run_id is None:
-            flash('This parser already completed extraction. Existing drafts and corrections were preserved.','info')
+            flash('The file has already been read. Your saved items and corrections are still available.','info')
             return redirect(url_for('ppmp_intake_review',sid=str(sid)))
         return extract_saved(api,str(sid),run_id,source['filename'],source['extension'],bytes(source['content']))
 

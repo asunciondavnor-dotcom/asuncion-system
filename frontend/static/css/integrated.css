@@ -134,3 +134,7 @@
 .intake-source-table tbody th{background:#f2f6f4}
 .intake-original-full{margin-top:16px}
 .intake-original .intake-source-text{font:inherit;line-height:1.65;color:#172b22}
+
+.intake-readable .btn:has(> .icon){display:inline-flex;align-items:center;gap:.45em;vertical-align:middle}
+.intake-readable .btn > .icon{width:1.25em;height:1.25em;flex:none}
+.intake-readable .raw-ocr-pre.intake-source-text{font:inherit;line-height:1.65;color:#172b22}

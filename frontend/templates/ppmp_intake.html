@@ -1,4 +1,19 @@
 {% extends 'base.html' %}
+{% from 'ui.html' import icon %}
+{% set field_names = {
+  'General Description and Objective of the Project to be Procured': 'Description and purpose',
+  'Type of the Project to be Procured': 'Project type',
+  'Quantity and Size of the Project to be Procured': 'Quantity and size details',
+  'Recommended Mode of Procurement': 'Suggested purchase method',
+  'Pre-Procurement Conference Applicable (Yes/No)': 'Planning meeting required (Yes/No)',
+  'Start of Procurement Activity': 'Planned purchase start',
+  'End of Procurement Activity': 'Planned purchase end',
+  'Expected Delivery/Implementation Period': 'Expected delivery or completion',
+  'Source of Funds': 'Funding source',
+  'Estimated Budget Allocation (Php)': 'Estimated budget (PHP)',
+  'Attached Supporting Documents': 'Supporting documents',
+  'Estimated Unit Cost': 'Estimated cost per unit'
+} %}
 {% macro item_status(item) -%}
   {%- if item.confidence.get('_item_approval') or item.converted -%}Official Item Record
   {%- elif item.confidence.get('_intake_verified') -%}Awaiting Approval
@@ -15,56 +30,57 @@
         {% if source and not uploads|selectattr('id','equalto',source.id)|list %}<option value="{{source.id}}" selected>{{source.filename}}</option>{% endif %}
         {% for upload in uploads %}<option value="{{upload.id}}" {{'selected' if source and upload.id==source.id}}>{{upload.filename}}</option>{% endfor %}
       </select></label>
-      <button class="btn" type="submit">Open items</button>
+      <button class="btn" type="submit">{{icon('document')}} Show items</button>
     </form>
     {% endif %}
     <div class="actions">
-      <button type="button" class="btn primary" data-item-dialog="upload-item-file" aria-haspopup="dialog">Upload Document</button>
-      <a class="btn" href="{{url_for('ppmp_dataset')}}">Inventory Item Source</a>
+      <button type="button" class="btn primary" data-item-dialog="upload-item-file" aria-haspopup="dialog">{{icon('upload')}} Upload document</button>
+      <a class="btn" href="{{url_for('ppmp_dataset')}}">{{icon('box')}} Inventory Item Source</a>
     </div>
   </div>
 </section>
 <dialog id="upload-item-file" class="item-review-dialog" aria-labelledby="upload-item-title" data-item-review>
-  <header class="item-review-heading"><h2 id="upload-item-title">Upload item document</h2><form method="dialog"><button class="btn small">Close</button></form></header>
+  <header class="item-review-heading"><h2 id="upload-item-title">Upload item document</h2><form method="dialog"><button class="btn small">{{icon('close')}} Close</button></form></header>
   <div class="item-review-body">
     <form method="post" action="{{url_for('ppmp_intake')}}" enctype="multipart/form-data" data-document-processing{% if config.get('RENDER_MODEL_PREPARATION') %} data-model-preparation="{{url_for('inference_preparation',kind='semantic')}}"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
       <label>Item document <input type="file" name="ocr_file" accept=".xlsx,.xlsm,.pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.csv,.docx,.txt" required></label>
-      <p class="muted">For official PPMP paperwork, upload a scan of the signed original. For spreadsheets, download the sample to see the supported columns.</p>
-      <div class="actions"><button class="btn primary">Upload and extract</button><a class="btn" href="{{url_for('item_upload_sample')}}">Download sample Excel file</a></div>
+      <p class="muted">Upload a scan or an Excel list. Use the Excel sample as a guide. If you upload official PPMP paperwork, use the signed original.</p>
+      <div class="actions"><button class="btn primary">{{icon('upload')}} Upload and read items</button><a class="btn" href="{{url_for('item_upload_sample')}}">{{icon('download')}} Download Excel sample</a></div>
       <p data-processing-message hidden role="status"></p>
     </form>
   </div>
 </dialog>
 {% if source %}{% set extraction=source.extraction or {} %}
-<section class="card document-workspace"><div class="toolbar"><div><span class="badge info">DOCUMENT SAVED</span><h3>{{source.filename}}</h3><p class="muted">Source {{source.id}} · Uploaded {{source.created_at|philippine_time}}</p></div><div class="actions"><a class="btn" href="{{url_for('ppmp_intake_source',sid=source.id)}}">Download original</a><a class="btn" href="{{url_for('document_history_detail',sid=source.id)}}">Process history</a></div></div>
-<p class="notice" data-live-status="extraction" role="status">{% if run and run.status=='PROCESSING' %}Extraction processing.{% elif run and run.status=='FAILED' %}Extraction failed. The original and previous corrections remain available.{% elif summary.total==0 %}No reliable rows were detected. Review the saved original and enter the missing item.{% elif run and run.status=='INCOMPLETE' %}Review the extracted rows against the original. Some source details may be incomplete.{% else %}Extraction completed. Verify items and send them for authorized approval.{% endif %}</p>
-<form method="post" action="{{url_for('ppmp_intake_reprocess',sid=source.id)}}" data-document-processing{% if config.get('RENDER_MODEL_PREPARATION') %} data-model-preparation="{{url_for('inference_preparation',kind='semantic')}}"{% endif %} data-confirm="Reprocess the saved original? Human corrections and official records will be preserved."><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn" type="submit" {{'disabled' if run and run.status=='PROCESSING'}}>Reprocess Extraction</button><p class="notice" data-processing-message hidden role="status"></p></form>
+<section class="card document-workspace"><div class="toolbar"><div><span class="badge info">DOCUMENT SAVED</span><h3>{{source.filename}}</h3><p class="muted">Source {{source.id}} · Uploaded {{source.created_at|philippine_time}}</p></div><div class="actions"><a class="btn" href="{{url_for('ppmp_intake_source',sid=source.id)}}">{{icon('download')}} Download original</a><a class="btn" href="{{url_for('document_history_detail',sid=source.id)}}">{{icon('history')}} Upload history</a></div></div>
+<p class="notice" data-live-status="extraction" role="status">{% if run and run.status=='PROCESSING' %}Reading items from the file.{% elif run and run.status=='FAILED' %}We could not read the file. You can still open the original and view any saved corrections.{% elif summary.total==0 %}No items were found. Open the original file and add the missing items for review.{% elif run and run.status=='INCOMPLETE' %}Some details may be missing. Compare the items with the original file.{% else %}Items are ready to review. Check them against the original file and send them for approval.{% endif %}</p>
+<form method="post" action="{{url_for('ppmp_intake_reprocess',sid=source.id)}}" data-document-processing{% if config.get('RENDER_MODEL_PREPARATION') %} data-model-preparation="{{url_for('inference_preparation',kind='semantic')}}"{% endif %} data-confirm="Read the original file again? Saved corrections and official records will be kept."><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn" type="submit" {{'disabled' if run and run.status=='PROCESSING'}}>{{icon('refresh')}} Read file again</button><p class="notice" data-processing-message hidden role="status"></p></form>
 <div class="document-summary" aria-label="Extracted item counts">{% for key,label in [('total','Total items'),('dbm','DBM'),('non_dbm','NON-DBM'),('lib','LIB'),('unclassified','Awaiting Category')] %}<div><span>{{label}}</span><strong data-live-count="{{key}}">{{summary[key]}}</strong></div>{% endfor %}</div>
 <nav class="document-tabs" aria-label="Item categories">{% for value,label,count in [('ALL','All Items',summary.total),('DBM','DBM',summary.dbm),('NON-DBM','NON-DBM',summary.non_dbm),('LIB','LIB',summary.lib),('UNASSIGNED','Awaiting Category',summary.unclassified)] %}<a class="{{'active' if selected==value}}" href="{{workspace_url(category=value,page=1)}}" {% if selected==value %}aria-current="page"{% endif %}>{{label}} <span>{{count}}</span></a>{% endfor %}</nav>
-<form method="get" class="document-filters" data-auto-filters data-record-navigation><input type="hidden" name="_nav" value="{{navigation_token()}}"><input type="hidden" name="category" value="{{selected}}">{% if sheets %}<label>Source worksheet<select name="sheet"><option value="">All worksheets</option>{% for sheet in sheets %}<option value="{{sheet}}" {{'selected' if selected_sheet==sheet}}>{{sheet}}</option>{% endfor %}</select></label>{% endif %}<label>Find an item<input type="search" name="q" value="{{search}}" maxlength="160" placeholder="Description, specification or reference"></label><label>Sort<select name="sort">{% for value,label in [('source','Source order'),('name','Description A–Z'),('name_desc','Description Z–A'),('status','Status'),('newest','Newest draft')] %}<option value="{{value}}" {{'selected' if sort==value}}>{{label}}</option>{% endfor %}</select></label><button class="btn" type="submit" data-auto-filter-submit>Apply</button><a class="btn" href="{{workspace_url(category='ALL',sheet='',q='',sort='source',page=1)}}">Reset</a>{% for key,value in request.args.items() if key.startswith('h_') %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}</form>
+<form method="get" class="document-filters" data-auto-filters data-record-navigation><input type="hidden" name="_nav" value="{{navigation_token()}}"><input type="hidden" name="category" value="{{selected}}">{% if sheets %}<label>Excel sheet<select name="sheet"><option value="">All sheets</option>{% for sheet in sheets %}<option value="{{sheet}}" {{'selected' if selected_sheet==sheet}}>{{sheet}}</option>{% endfor %}</select></label>{% endif %}<label>Find an item<input type="search" name="q" value="{{search}}" maxlength="160" placeholder="Description, specification or reference"></label><label>Sort<select name="sort">{% for value,label in [('source','Order in the file'),('name','Description A–Z'),('name_desc','Description Z–A'),('status','Status'),('newest','Newest first')] %}<option value="{{value}}" {{'selected' if sort==value}}>{{label}}</option>{% endfor %}</select></label><button class="btn" type="submit" data-auto-filter-submit>Apply</button><a class="btn" href="{{workspace_url(category='ALL',sheet='',q='',sort='source',page=1)}}">Reset</a>{% for key,value in request.args.items() if key.startswith('h_') %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}</form>
 <div class="table-scroll" data-live-region="categorized-items"><table class="table document-items"><thead><tr><th>Item reference</th><th>Description / specification</th><th>Quantity / unit</th><th>Unit price</th><th>Estimated budget</th><th>Category</th><th>Status</th><th>Action</th></tr></thead><tbody>
 {% for item in items %}
 {% set approved=item.confidence.get('_item_approval') %}
 {% set verified=item.confidence.get('_intake_verified') %}
 {% set quantity_review=(item.confidence.get('_source_evidence') or {}).get('quantity_review') %}
-{% set title=item.fields.get('Item Name') or 'Item requiring correction' %}
+{% set title=item.fields.get('Item Name') or 'Item name needs review' %}
 {% set description=item.fields.get('General Description and Objective of the Project to be Procured') %}
 <tr>
   <td><strong>{{item.item_reference}}</strong>{% if item.source_number %}<div class="muted">Source item {{item.source_number}}</div>{% endif %}</td>
   <td><strong>{{title}}</strong>{% if description and description!=title %}<div>{{description}}</div>{% endif %}</td>
-  <td>{% if not verified and not approved and quantity_review %}<span class="badge warn">Verify quantity and unit</span>{% elif item.fields.get('Quantity') or item.fields.get('Unit') %}{{item.fields.get('Quantity','')}} {{item.fields.get('Unit','')}}{% else %}<span class="muted">Not established</span>{% endif %}</td>
-  <td class="numeric">{{item.fields.get('Estimated Unit Cost','')|money if item.fields.get('Estimated Unit Cost','')!='' else 'Not established'}}</td>
-  <td class="numeric">{{item.fields.get('Estimated Budget Allocation (Php)','')|money if item.fields.get('Estimated Budget Allocation (Php)','')!='' else 'Not established'}}</td>
+  <td>{% if not verified and not approved and quantity_review %}<span class="badge warn">Verify quantity and unit</span>{% elif item.fields.get('Quantity') or item.fields.get('Unit') %}{{item.fields.get('Quantity','')}} {{item.fields.get('Unit','')}}{% else %}<span class="muted">Not found</span>{% endif %}</td>
+  <td class="numeric">{{item.fields.get('Estimated Unit Cost','')|money if item.fields.get('Estimated Unit Cost','')!='' else 'Not found'}}</td>
+  <td class="numeric">{{item.fields.get('Estimated Budget Allocation (Php)','')|money if item.fields.get('Estimated Budget Allocation (Php)','')!='' else 'Not found'}}</td>
   <td>{{item.ppmp_category if approved or item.converted else 'Awaiting Category'}}</td>
   <td><span class="badge {{'ok' if approved else 'warn' if verified else 'info'}}">{{item_status(item)}}</span></td>
   <td><button type="button" class="btn small {{'primary' if verified and not approved and session.get('role')=='Admin' else ''}}"
               data-item-dialog="edit-{{item.id}}" aria-haspopup="dialog"
               aria-label="{{'Review approval for' if verified and not approved and session.get('role')=='Admin' else 'Review'}} {{title}}">
+       {{icon('check' if verified and not approved and session.get('role') == 'Admin' else 'document' if approved or verified else 'edit')}}
        {{'Review approval' if verified and not approved and session.get('role')=='Admin' else 'View' if approved or verified else 'Review'}}
     </button>
-    {% if item.official_ppmp_id %}<a class="btn small" href="{{url_for('ppmp_review',id=item.official_ppmp_id)}}">Official PPMP</a>
-    {% elif approved %}<a class="btn small" href="{{url_for('ppmp_type',ptype=item.ppmp_category,ocr_source=source.id)}}">Open PPMP category</a>{% endif %}
+    {% if item.official_ppmp_id %}<a class="btn small" href="{{url_for('ppmp_review',id=item.official_ppmp_id)}}">{{icon('document')}} View PPMP</a>
+    {% elif approved %}<a class="btn small" href="{{url_for('ppmp_type',ptype=item.ppmp_category,ocr_source=source.id)}}">{{icon('document')}} Open PPMP category</a>{% endif %}
   </td>
 </tr>
 {% else %}<tr><td colspan="8">No items match these filters.</td></tr>{% endfor %}
@@ -83,14 +99,14 @@
     <div><span class="badge {{'ok' if approved else 'warn' if verified else 'info'}}">{{item_status(item)}}</span>
     <h2 id="review-title-{{item.id}}">{{item.fields.get('Item Name') or 'Review extracted item'}}</h2>
     <small class="muted">{{item.item_reference}}</small></div>
-    <form method="dialog"><button type="submit" class="btn small" autofocus>Close</button></form>
+    <form method="dialog"><button type="submit" class="btn small" autofocus>{{icon('close')}} Close</button></form>
   </header>
   <div class="item-review-body">
     {% if not verified and not approved and evidence.get('quantity_review') %}<p class="notice">{{evidence.quantity_review}}</p>{% endif %}
     {% if can_approve or (verified and can_edit) %}
     <dl class="item-review-values">
       <div><dt>Category</dt><dd>{{item.ppmp_category if approved or item.converted else 'Assigned at approval'}}</dd></div>
-      {% for label in labels if item.fields.get(label) %}<div><dt>{{label}}</dt><dd>{{item.fields[label]}}</dd></div>{% endfor %}
+      {% for label in labels if item.fields.get(label) %}<div><dt>{{field_names.get(label, label)}}</dt><dd>{{item.fields[label]}}</dd></div>{% endfor %}
     </dl>
     {% endif %}
     {% if can_approve %}
@@ -102,7 +118,7 @@
       <label>PPMP category<select name="category" required><option value="">Choose category</option>{% for category in categories %}<option value="{{category}}">{{category}}</option>{% endfor %}</select></label>
       {% if item.suggestion.category %}<p class="muted">Suggested category: {{item.suggestion.category}}</p>{% endif %}
       <label><input type="checkbox" name="confirm_approval" value="yes" required> I approve this verified item for PPMP selection.</label>
-      <button class="btn primary" type="submit">Approve item</button>
+      <button class="btn primary" type="submit">{{icon('check')}} Approve item</button>
     </form>
     {% endif %}
     {% if can_edit %}
@@ -111,22 +127,22 @@
       <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
       <input type="hidden" name="draft_id" value="{{item.id}}">
       <input type="hidden" name="revision" value="{{item.revision}}">
-      {% for label in labels %}<label>{{label}}<textarea name="field_{{loop.index0}}" rows="2" maxlength="5000">{{item.fields.get(label,'')}}</textarea></label>{% endfor %}
+      {% for label in labels %}<label>{{field_names.get(label, label)}}<textarea name="field_{{loop.index0}}" rows="2" maxlength="5000">{{item.fields.get(label,'')}}</textarea></label>{% endfor %}
       <label class="full item-review-check"><input type="checkbox" name="confirm_review" value="yes" required> I verified the item details against the source.</label>
       <label class="full item-review-check"><input type="checkbox" name="confirm_quantity_change" value="yes"> I intentionally changed the extracted quantity.</label>
-      <div class="full item-review-actions"><button class="btn primary" type="submit">Verify and send for approval</button></div>
+      <div class="full item-review-actions"><button class="btn primary" type="submit">{{icon('check')}} Verify and send for approval</button></div>
     </form>
     {% if verified %}</details>{% endif %}
     {% elif not verified or approved %}
-    <dl class="item-review-values"><div><dt>Category</dt><dd>{{item.ppmp_category if approved or item.converted else 'Assigned at approval'}}</dd></div>{% for label in labels if item.fields.get(label) %}<div><dt>{{label}}</dt><dd>{{item.fields[label]}}</dd></div>{% endfor %}</dl>
+    <dl class="item-review-values"><div><dt>Category</dt><dd>{{item.ppmp_category if approved or item.converted else 'Assigned at approval'}}</dd></div>{% for label in labels if item.fields.get(label) %}<div><dt>{{field_names.get(label, label)}}</dt><dd>{{item.fields[label]}}</dd></div>{% endfor %}</dl>
     {% endif %}
-    <details class="item-review-evidence"><summary>Original item evidence</summary>
+    <details class="item-review-evidence"><summary>What the file showed for this item</summary>
       {% if evidence.get('reference_row') %}<p>Excel row {{evidence.reference_row}}. On hand {{evidence.on_hand}} {{evidence.source_unit}}. Historical value {{evidence.historical_value}}.</p>{% endif %}
-      <pre class="raw-ocr-pre">{{evidence.get('text','No aligned source text captured.') }}</pre>
-      {% if evidence.get('alternate_reading') %}<p>Second OCR reading</p><pre class="raw-ocr-pre">{{evidence.alternate_reading}}</pre>{% endif %}
+      <pre class="raw-ocr-pre intake-source-text">{{evidence.get('text','No original text was found for this item.') }}</pre>
+      {% if evidence.get('alternate_reading') %}<p>Other possible reading</p><pre class="raw-ocr-pre intake-source-text">{{evidence.alternate_reading}}</pre>{% endif %}
     </details>
     {% if item.confidence.get('_review_history') %}
-    <details class="item-review-evidence"><summary>Correction history</summary><ul>
+    <details class="item-review-evidence"><summary>Saved changes</summary><ul>
       {% for change in item.confidence['_review_history'] %}<li>{{change.at}} · User {{change.by}} · Revision {{change.revision}} · {% if change.previous_category is defined %}{{change.previous_category}} to {{change.category}}{% endif %}</li>{% endfor %}
     </ul></details>
     {% endif %}
@@ -135,8 +151,8 @@
 {% endfor %}
 </div>
 {% if (summary.total==0 or extraction.get('method')=='OCR of numbered PPMP item column') and source.owner_id==session.get('user_id') and (not run or run.status!='PROCESSING') %}
-<details class="card"><summary>Add an item from the saved original</summary><form method="post" class="form-grid"><input type="hidden" name="action" value="add"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">{% for label in labels %}<label>{{label}}<textarea name="field_{{loop.index0}}" maxlength="5000"></textarea></label>{% endfor %}<label><input type="checkbox" name="confirm_review" value="yes" required> I copied the item from the saved original</label><button class="btn">Save for review</button></form></details>{% endif %}
-{% if extraction.get('warnings') %}<div class="warning-box"><strong>Extraction needs review</strong><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}{% if session.get('role') == 'Admin' %}
+<details class="card"><summary>Add a missing item from the original file</summary><form method="post" class="form-grid"><input type="hidden" name="action" value="add"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">{% for label in labels %}<label>{{field_names.get(label, label)}}<textarea name="field_{{loop.index0}}" maxlength="5000"></textarea></label>{% endfor %}<label><input type="checkbox" name="confirm_review" value="yes" required> I copied the item from the saved original</label><button class="btn">Save for review</button></form></details>{% endif %}
+{% if extraction.get('warnings') %}<div class="warning-box"><strong>Check the items against the original file</strong><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}{% if session.get('role') == 'Admin' %}
 <details class="card intake-original">
   <summary>Original extracted data</summary>
   <p class="muted">These are the values first read from the document. You can correct them using Review in the item table above.</p>
@@ -145,19 +161,19 @@
     <table class="table">
       <caption>{{worksheet.name}}</caption>
       <thead><tr><th scope="col">Row</th>{% for column in worksheet.columns %}<th scope="col">{{column or ('Column ' ~ loop.index)}}</th>{% endfor %}</tr></thead>
-      <tbody>{% for row in worksheet.rows %}<tr><th scope="row">{{row.number or '?'}}</th>{% for cell in row.cells %}<td>{{cell if cell is not none and cell != '' else '?'}}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      <tbody>{% for row in worksheet.rows %}<tr><th scope="row">{{row.number if row.number is not none else '&mdash;'|safe}}</th>{% for cell in row.cells %}<td>{{cell if cell is not none and cell != '' else '&mdash;'|safe}}</td>{% endfor %}</tr>{% endfor %}</tbody>
     </table>
   </div>
   {% endfor %}
   {% if extraction.get('text') %}
-    {% if original_worksheets %}<details class="intake-original-full"><summary>View full extracted text</summary>{% endif %}
+    {% if original_worksheets %}<details class="intake-original-full"><summary>View all text read from the file</summary>{% endif %}
     <pre class="raw-ocr-pre intake-source-text">{{extraction.text}}</pre>
     {% if original_worksheets %}</details>{% endif %}
   {% elif not original_worksheets %}
-    <p>No extracted data is available for this document.</p>
+    <p>No data was read from this file.</p>
   {% endif %}
 </details>
 {% endif %}
-{% else %}<section class="card document-workspace"><div class="table-scroll"><table class="table document-items"><thead><tr><th>Item</th><th>Quantity / unit</th><th>Category</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td colspan="5">Upload a document to extract and review its items here.</td></tr></tbody></table></div></section>{% endif %}
+{% else %}<section class="card document-workspace"><div class="table-scroll"><table class="table document-items"><thead><tr><th>Item</th><th>Quantity / unit</th><th>Category</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td colspan="5">Upload a document. The items will appear here for review.</td></tr></tbody></table></div></section>{% endif %}
 </div>
 {% endblock %}{% block scripts %}<script defer src="{{url_for('static',filename='js/document-workspace.js')}}"></script>{% endblock %}

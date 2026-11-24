@@ -5,7 +5,7 @@
     const form=event.target;
     if(event.defaultPrevented||!form.matches?.('form[data-document-processing]'))return;
     const notice=form.querySelector('[data-processing-message]');
-    if(notice){notice.hidden=false;notice.dataset.category='info';notice.textContent='Processing the document request. Wait for the saved extraction result before continuing.';}
+    if(notice){notice.hidden=false;notice.dataset.category='info';notice.textContent='Reading items from the file. Please wait.';}
   });
   document.addEventListener('click',event=>{
     const button=event.target.closest('[data-item-dialog]');
