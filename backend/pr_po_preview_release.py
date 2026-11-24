@@ -7,7 +7,8 @@ from pr_po_preview_model import VERSION, load
 from pr_po_release import ROOT
 
 
-PARAMETERS_SHA256 = 'c4fc60f2b93b0f1778883296fa20682fe056638203f4e4bc752b01183799b145'
+PARAMETERS_SHA256 = '863b8bed6fc90218d45dc3b858b45122c8c0e72811499e99e142562d7b1727a0'
+NAME = 'MiniLM PR–PO ensemble'
 _model = None
 
 
@@ -33,6 +34,10 @@ def prepare(encode):
     if _model is None:
         _model = checked_model(encode)
         print(json.dumps({'event': 'pr_po_ensemble_preview_ready', 'model': VERSION, 'cases_passed': 4}), flush=True)
+
+
+def prepared():
+    return _model is not None
 
 
 def assessor():

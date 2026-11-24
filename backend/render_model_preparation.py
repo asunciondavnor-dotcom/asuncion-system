@@ -25,7 +25,10 @@ def _ready(kind, config):
         from offline_ocr_mapper import semantic_model_ready
         return semantic_model_ready(release)
     if config.get('PR_PO_LINEAR_MODEL_ENABLED'):
-        from pr_po_release import prepared
+        if config.get('PR_PO_ENSEMBLE_ACTIVE'):
+            from pr_po_preview_release import prepared
+        else:
+            from pr_po_release import prepared
         return prepared()
     from retrained_nlp_runtime import assets_ready
     return assets_ready(config['PSMS_RETRAINED_NLP_DIR'], release)

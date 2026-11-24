@@ -72,6 +72,6 @@ class Assessor(BaseAssessor):
         rows = [dict(prediction, pr_position=i + 1 if i is not None else None, po_position=j + 1 if j is not None else None)
                 for (i, j), prediction in zip(indices, predictions(self.line, inputs), strict=True)]
         probabilities, match = self.assess_document(left, right, evidence, pairs, rows)
-        winner = int(probabilities.argmax())
+        winner = list(self.document.classes_).index(match['label'])
         document = dict(label=str(self.document.classes_[winner]), score=float(probabilities[winner]) * 100)
         return dict(schema=ASSESSMENT_VERSION, model_version=self.version, document=document, match=match, rows=rows)

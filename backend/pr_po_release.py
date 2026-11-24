@@ -24,6 +24,7 @@ def configure(config):
     if config.get('PSMS_ENV') != 'production' or not enabled(config) or config.get('_PSMS_INFERENCE_RELEASE_ID') != ORIGINAL:
         raise RuntimeError('PR_PO_MODEL_RELEASE_CONFIGURATION')
     config['PR_PO_LINEAR_MODEL_ENABLED'] = True
+    config['PR_PO_ENSEMBLE_ACTIVE'] = os.environ.get('PSMS_PR_PO_ENSEMBLE_ACTIVE') == '1'
 
 
 def load(*, root=ROOT):

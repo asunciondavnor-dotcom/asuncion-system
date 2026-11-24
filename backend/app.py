@@ -1987,7 +1987,10 @@ def trained_nlp_model_status():
     if render_model_preparation.enabled(app.config):
         ready = render_model_preparation.state('rf', app.config) == 'ready'
         if app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
-            from pr_po_release import NAME, VERSION
+            if app.config.get('PR_PO_ENSEMBLE_ACTIVE'):
+                from pr_po_preview_release import NAME, VERSION
+            else:
+                from pr_po_release import NAME, VERSION
             model = {'deployed_model': NAME, 'runtime': VERSION}
         else:
             model = {'deployed_model': 'FastText + Random Forest', 'runtime': 'retrained_rf'}
@@ -3723,7 +3726,7 @@ def nlp_prediction_preview():
                     assessed=assessor.assess(*documents)
                     result,confidence=assessed['document']['label'],assessed['document']['score']
                     assessment=display_model_assessment(assessed,*documents)
-                    if candidate:
+                    if 'match' in assessed:
                         from pr_po_model_assessment import document_result
                         result, confidence = document_result(assessed)
                         match = assessed['match']

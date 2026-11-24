@@ -1,7 +1,7 @@
 """Combine the trained item-identity and item-line checks for document matching."""
 
 import numpy as np
-from scipy.special import expit
+from scipy.special import expit, softmax
 
 from pr_po_match_score import CLASSIFIER_LABELS
 from pr_po_model_features import Line, distinguishing_words, document_alignment, normalized
@@ -44,6 +44,37 @@ class RejectionHead(EvidenceHead):
         updated[ACCEPTABLE] -= moved
         updated[REJECT] += moved
         return updated
+
+
+class QualifierEvidence:
+    """Learned probability that two descriptions name incompatible product variants."""
+
+    def __init__(self, data):
+        self.weights = np.asarray(data['weights'], dtype=float)
+        self.bias = np.asarray(data['bias'], dtype=float)
+        self.opposing = np.asarray(data['opposing'], dtype=int)
+        self.cutoff = float(data['cutoff'])
+        self.temperature = float(data['temperature'])
+        if (self.weights.shape != (5, 384) or self.bias.shape != (5,)
+                or self.opposing.shape != (2, 2) or np.any(self.opposing < 0) or np.any(self.opposing >= 5)
+                or not np.isfinite(self.weights).all() or not np.isfinite(self.bias).all()
+                or not 0 < self.cutoff < 1 or not 0 < self.temperature <= 100):
+            raise ValueError('PR_PO_QUALIFIER_PARAMETERS')
+
+    def assess(self, probabilities, left, right, vectors):
+        tags = [vectors.get(normalized(item.name)) for item in (left, right)]
+        if any(tag is None for tag in tags):
+            return probabilities
+        first, second = softmax(np.asarray(tags) @ self.weights.T + self.bias, axis=1)
+        a, b = self.opposing.T
+        risk = float((first[a] * second[b] + first[b] * second[a]).sum())
+        if risk < self.cutoff:
+            return probabilities
+        changed = probabilities.copy()
+        moved = changed[ACCEPTABLE] * expit((risk - self.cutoff) * self.temperature)
+        changed[ACCEPTABLE] -= moved
+        changed[REJECT] += moved
+        return changed
 
 
 class SubstitutionEvidence:

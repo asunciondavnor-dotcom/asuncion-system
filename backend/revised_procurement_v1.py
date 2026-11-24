@@ -629,7 +629,10 @@ def pr_po_predictor(app):
     require_available(app.config)
     with ready_for_processing('rf', app.config):
         if app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
-            from pr_po_release import assessor
+            if app.config.get('PR_PO_ENSEMBLE_ACTIVE'):
+                from pr_po_preview_release import assessor
+            else:
+                from pr_po_release import assessor
             from render_resource_logging import measure
             with measure('pr_po_model_inference'):
                 yield assessor()
@@ -685,6 +688,10 @@ def nlp_page(api):
                 if assessor is not None and api['app'].config.get('PR_PO_LINEAR_MODEL_ENABLED'):
                     from pr_po_release import ARTIFACTS
                     artifact_hashes=dict(ARTIFACTS)
+                    if api['app'].config.get('PR_PO_ENSEMBLE_ACTIVE'):
+                        from pr_po_preview_release import PARAMETERS_SHA256
+                        artifact_hashes = {'minilm-fp32.ort': ARTIFACTS['minilm-fp32.ort'],
+                                           'ensemble.json.gz': PARAMETERS_SHA256}
                 if assessor is None and api['app'].config.get('PSMS_NLP_RUNTIME','legacy')=='legacy':
                     import fasttext_nlp_runtime
                     from nlp_runtime_selection import model_root
@@ -1035,7 +1042,13 @@ def verification_display(row,pr_items=(),po_items=(),stale=False,*,current_compa
             verdict='Reject'
         elif confirmed or incidence['extras']:
             verdict='Needs Recanvass'
+    from pr_po_match_score import match_evidence
+    model = details.get('model_assessment')
+    match = match_evidence(model.get('match')) if not stale and isinstance(model,dict) else None
+    if match and match['label'] != row.get('result'):
+        match = None
     return dict(status=status,percentage=measured,percentage_basis=basis,eligibility_status=eligibility_status,
+        model_match=match,
         verdict=verdict,model_disagreement=model_disagreement,
         percentage_final=value is not None,review_coverage=coverage,pending_checks=pending_checks,pending_items=pending_items,
         score_band=discrepancy_band(value),

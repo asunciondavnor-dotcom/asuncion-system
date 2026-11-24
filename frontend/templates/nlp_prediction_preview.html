@@ -4,7 +4,7 @@
 {% block content %}
 <section class="card">
   <div class="toolbar page-head"><h2>PR–PO Prediction Preview</h2><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
-  {% if config.get('PR_PO_ENSEMBLE_PREVIEW') %}
+  {% if config.get('PR_PO_ENSEMBLE_PREVIEW') and not config.get('PR_PO_ENSEMBLE_ACTIVE') %}
   <p><a class="btn" href="{{url_for('nlp_prediction_preview', candidate='1') if not candidate else url_for('nlp_prediction_preview')}}">{{'Test retrained model' if not candidate else 'Preview current model'}}</a></p>
   {% endif %}
   <p>Enter one item from each side to run {{'the retrained model for compatibility testing' if candidate else 'the approved model'}}. Leave quantity or unit blank if the source omits it. The preview saves no procurement records.</p>
@@ -29,7 +29,7 @@
   {% if match %}
   <h3>PR–PO match result</h3>
   {{outcome_badge(match.label,match.score)}}
-  <p class="muted">Retrained model compatibility preview</p>
+  <p class="muted">{{'Retrained model compatibility preview' if candidate else 'Read-only preview of the approved verification model'}}</p>
   {% else %}
   {{result_summary(preview.display,preview.result,preview.confidence,preview.assessment|default(none))}}
   {% endif %}

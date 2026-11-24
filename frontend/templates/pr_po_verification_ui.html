@@ -18,9 +18,15 @@
 {% macro result_summary(d, prediction, score, assessment=none) -%}
 <div class="pr-po-result-summary" role="status">
   <section class="pr-po-result-panel">
+    {% if d.model_match %}
+    <h3>PR–PO match result</h3>
+    {{outcome_badge(d.model_match.label,d.model_match.score)}}
+    {% if score is number %}<details><summary>Model class score</summary>{{outcome_badge(prediction,score)}}</details>{% endif %}
+    {% else %}
     <h3>Predicted classification</h3>
     {{outcome_badge(prediction,score)}}
     {% if score is number %}<p class="muted">The percentage is the model score for its predicted outcome.</p>{% endif %}
+    {% endif %}
   </section>
   <section class="pr-po-result-panel">
     {% if assessment %}
