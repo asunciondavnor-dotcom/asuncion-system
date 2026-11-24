@@ -22,6 +22,7 @@ PLANNING_CONTEXT = {
 }
 NAME=('Item Name','item','name','Item')
 QUANTITY=('Quantity','quantity','qty','QTY','Requested Quantity','Awarded Quantity')
+NARRATIVE_FIELDS = {'description','description / specification','item description','specification','specifications','detailed specifications','technical specifications'}
 UNIT=('Unit','unit','Unit of Measure','unit_of_measure','uom')
 DESCRIPTIVE={'description','description / specification','item description','specification','specifications',
  'detailed specifications','technical specifications','brand','model','item type','category','capacity',
@@ -129,6 +130,25 @@ def number(value):
         return result if result.is_finite() and result>=0 else None
     except InvalidOperation:return None
 
+def specification_without_order_header(value, row):
+    """Remove a repeated order header only when its quantity and unit agree."""
+    from procurement_item_contract import normalized_unit
+
+    match = re.fullmatch(
+        r'\s*(\d[\d,]*(?:\.\d+)?)\s+([a-z]+\.?)\s*(?:;\s*|\s+-\s+)(\S.*)', value, re.I,
+    )
+    if (not match or row['conflicting_quantity'] or row['conflicting_unit']
+            or re.match(r'^(?:per\b|/)', match[3], re.I)):
+        return value
+    amount = number(match[1])
+    unit = normalized_unit(row['unit']).casefold()
+    if amount is None or amount <= 0 or amount != number(row['quantity']) or not unit:
+        return value
+    if normalized_unit(match[2]).casefold() != unit:
+        return value
+    return match[3]
+
+
 def classification_scope(item,label,value):
     """Recognize only source-backed planning aliases, not arbitrary item types.
 
@@ -179,7 +199,9 @@ def evidence(item,position,side,*,technical=False):
     name=str(first(item,NAME) or first(item,('description','Description / Specification','Item Description')) or '').strip()
     if technical and side=='PR' and fields.get('Item Description') and norm(fields['Item Description'])==norm(name):
         has_dedicated_spec=any(norm(k) in ('description / specification','description','specification','specifications','technical specifications','detailed specifications') for k in fields)
-        if not has_dedicated_spec:
+        if has_dedicated_spec:
+            del fields['Item Description']
+        else:
             source_spec=worksheet_item_specification(item)
             if source_spec:
                 fields['Item Description']=source_spec
@@ -293,11 +315,12 @@ def check_pair(left,right,identity):
         # An unproven classification is not automatically a supplier technical
         # requirement. Keep it unresolved (and approval-blocking) when absent.
         if required:add(category,'UNKNOWN' if not offered else 'MATCH' if required==offered else 'MISMATCH',required,offered)
-    narrative_keys={'description','description / specification','item description','specification','specifications','detailed specifications','technical specifications'}
-    requested_text=' '.join(dict.fromkeys(norm(v) for k,v in left['fields'].items() if norm(k) in narrative_keys))
-    offered_text=' '.join(dict.fromkeys(norm(v) for k,v in right['fields'].items() if norm(k) in narrative_keys))
+    requested_text=' '.join(dict.fromkeys(norm(v) for k,v in left['fields'].items() if norm(k) in NARRATIVE_FIELDS))
+    offered_text=' '.join(dict.fromkeys(norm(v) for k,v in right['fields'].items() if norm(k) in NARRATIVE_FIELDS))
     if requested_text:
-        add('source specification wording', 'MATCH' if core_description_tokens(requested_text,left)==core_description_tokens(offered_text,right) else
+        requested_spec=specification_without_order_header(requested_text,left)
+        offered_spec=specification_without_order_header(offered_text,right)
+        add('source specification wording', 'MATCH' if core_description_tokens(requested_spec,left)==core_description_tokens(offered_spec,right) else
             'MISSING_SPECIFICATION' if not offered_text else
             'REQUIRES_HUMAN_REVIEW', requested_text,offered_text)
     requested,offered=facts(left),facts(right)
@@ -307,7 +330,7 @@ def check_pair(left,right,identity):
     # adjudicates a different value. Known parsed attributes keep their rules.
     for key,value in left['fields'].items():
         label=norm(key.replace('_',' '))
-        if key in NAME or label in narrative_keys or label in categories or label in requested:continue
+        if key in NAME or label in NARRATIVE_FIELDS or label in categories or label in requested:continue
         available=[v for k,v in right['fields'].items() if norm(k.replace('_',' '))==label]
         state=('MISSING_SPECIFICATION' if not available else 'MATCH'
                if all(specification_tokens(value)==specification_tokens(v) for v in available)

@@ -8,7 +8,8 @@ from scipy.optimize import linear_sum_assignment
 from pr_po_match_score import match_evidence
 from pr_po_model_features import (Line, distinguishing_words, document_alignment,
                                   document_features, line_features, name_features, normalized)
-from procurement_comparison_v1 import NAME, norm, number, project
+from procurement_comparison_v1 import (NAME, NARRATIVE_FIELDS, norm, number, project,
+                                       specification_without_order_header)
 
 
 LABELS = ('Acceptable','Needs Recanvass','Needs Review','Reject')
@@ -20,8 +21,10 @@ def source_lines(items, side):
     for row in project(items,side,technical=True):
         specifications = []
         for key,value in row['fields'].items():
-            if key not in NAME and norm(value)!=norm(row['name']) and value not in specifications:
-                specifications.append(value)
+            if key not in NAME and norm(value)!=norm(row['name']):
+                specification = specification_without_order_header(value, row) if norm(key) in NARRATIVE_FIELDS else value
+                if specification not in specifications:
+                    specifications.append(specification)
         amount = None if row['conflicting_quantity'] else number(row['quantity'])
         quantity = float(amount) if amount is not None else None
         if quantity is not None and not math.isfinite(quantity):
