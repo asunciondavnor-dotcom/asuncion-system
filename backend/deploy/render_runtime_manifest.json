@@ -50,7 +50,7 @@
     "private_workbooks.py": "18aac75212caf210bee57aa3dc13625ee3145034335001cf97bdd6a4e30af881",
     "procurement_comparison_v1.py": "abed5402460127a22a9399222baf8ef725c6a297d28f82b9209f039f0ed6fe3d",
     "procurement_creation.py": "e0b2145c4b4d7e65b5727429badf537c1457783f0f6042edca882c33755cadb1",
-    "procurement_document_layout.py": "2a7604ac7bf7b7874337db253eaea3678bc727b4508d51ea5dccf1c41520605d",
+    "procurement_document_layout.py": "39cc47cc1f87e49bce9ea7cd3222f96cb6d99ec0d58965e6977d23ddb2060291",
     "procurement_item_contract.py": "f2adc4e49f2705d75e8cd36dc85786a0f0780130c9dab202fec8ab2c98fccaa9",
     "procurement_pricing_v0_1_0/__init__.py": "4568ed156574beea55f1936851492d6891ed3b1f068c26aabea9e013efb655a4",
     "procurement_pricing_v0_1_0/contracts.py": "6be12c69bc3f7b335dd8332f0def3ea2cdbc721387931cbaa224cfb7c2e18b6d",

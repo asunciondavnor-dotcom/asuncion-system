@@ -210,6 +210,8 @@ def text_region_role(text):
         return 'signature'
     if re.match(r'^---\s*Page\s+\d+', text, re.I):
         return 'page_boundary'
+    if norm(text) in {'supply requirements list', 'list of supply requirements'}:
+        return 'document_title'
     if re.fullmatch(r'.*\b(?:PROJECT PROCUREMENT MANAGEMENT PLAN|ABSTRACT OF QUOTATIONS)\b.*', text, re.I):
         return 'document_title'
     return 'uncertain_region'
