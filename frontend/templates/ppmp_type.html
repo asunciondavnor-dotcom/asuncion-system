@@ -51,16 +51,21 @@
 </tbody></table></div></form>
 
 {% if ocr_rows %}
-<dialog id="ocrReviewDialog" class="ppmp-editor-modal ocr-review-modal" data-category="{{ptype}}" aria-labelledby="ocrReviewTitle">
-  <div class="modal-head"><div class="modal-icon">{{icon('edit')}}</div><div><h3 id="ocrReviewTitle">Edit PPMP item</h3><p class="muted">Verify every field before creating an official PPMP record.</p></div><button type="button" class="modal-x" data-ocr-close aria-label="Close review">×</button></div>
+<dialog id="ocrReviewDialog" class="item-review-dialog ocr-review-modal" data-category="{{ptype}}" aria-labelledby="ocrReviewTitle">
+  <header class="item-review-heading">
+    <div><span id="ocrReviewStatus" class="badge"></span>
+      <h2 id="ocrReviewTitle">Review PPMP item</h2>
+      <small class="muted" id="ocrReviewReference"></small></div>
+    <button type="button" class="btn small" data-ocr-close>{{icon('close')}} Close</button>
+  </header>
   <form method="post" id="ocrReviewForm"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="update_ocr_rows"><input type="hidden" name="ocr_temp_id" id="ocrTempId"><input type="hidden" name="ocr_revision" id="ocrRevision">
-    <div class="editor-scroll"><div class="selected-strip"><label for="ocrItemSelect">Selected item</label><div class="selected-nav"><select id="ocrItemSelect" aria-controls="ocrReviewPanel"></select><span class="position" id="ocrItemPosition"></span><button type="button" class="btn small" id="ocrItemPrev" aria-label="Previous item">&lsaquo;</button><button type="button" class="btn small" id="ocrItemNext" aria-label="Next item">&rsaquo;</button></div></div><div id="ocrReviewPanel" role="region" tabindex="0" aria-labelledby="ocrReviewTitle"><div class="ocr-review-status" id="ocrReviewStatus"></div><p id="ocrReviewMessage" role="status" aria-live="polite"></p><ul id="ocrItemErrors" class="warning-box" hidden></ul>
+    <div class="item-review-body"><div class="selected-strip" id="ocrItemNavigation" hidden><label for="ocrItemSelect">Selected item</label><div class="selected-nav"><select id="ocrItemSelect" aria-controls="ocrReviewPanel"></select><span class="position" id="ocrItemPosition"></span><button type="button" class="btn small" id="ocrItemPrev" aria-label="Previous item">&lsaquo;</button><button type="button" class="btn small" id="ocrItemNext" aria-label="Next item">&rsaquo;</button></div></div><div id="ocrReviewPanel" role="region" tabindex="0" aria-labelledby="ocrReviewTitle"><p class="muted">Check the item details against the original document before confirming your review.</p><p id="ocrReviewMessage" role="status" aria-live="polite"></p><ul id="ocrItemErrors" class="warning-box" hidden></ul>
     {{extracted_item_fields(ocr_field_labels)}}
     <label id="ocrCategoryReview" class="warning-box" hidden><input type="checkbox" id="ocrCategoryConfirmed"> I checked the original evidence and confirm this item's category is {{ptype}}. This does not approve a procurement document.</label>
     <p id="ocrConsistencyWarning" class="warning-box" role="status"></p>
     <label id="ocrSourceDifference" class="warning-box" hidden><input type="checkbox" id="ocrSourceDifferenceConfirm"> Quantity differs from the extracted source. I checked the original and confirm this intentional correction.</label>
-    <details id="ocrSourceComparison" class="ocr-source-comparison"><summary>Check against the original document</summary>
+    <details id="ocrSourceComparison" class="ocr-source-comparison item-review-evidence"><summary>Check against the original document</summary>
       <p id="ocrDocumentMetadata" class="muted"></p><p id="ocrSourceKind"></p>
       <div class="ocr-comparison-grid"><section><h4>Original document</h4><a id="ocrOriginalSource" class="btn small" target="_blank" rel="noopener">Open original document</a>
       <iframe id="ocrSourcePreview" title="Original authorized source document" loading="lazy" hidden></iframe>
@@ -68,7 +73,7 @@
       </section><section><h4>What the system read</h4><pre class="raw-ocr-pre" id="ocrItemEvidence"></pre></section></div>
     </details>
     </div></div>
-    <div class="modal-footer"><span class="muted">Review saves drafts only. Official creation and approval remain separate.</span><div class="actions"><button type="button" class="btn" data-ocr-close>Cancel</button><button class="btn primary" type="submit" id="ocrSaveReview">Save and confirm review</button></div></div>
+    <div class="modal-footer"><span class="muted">Saving confirms the item review. PPMP creation and approval are separate steps.</span><div class="actions"><button type="button" class="btn" data-ocr-close>Cancel</button><button class="btn primary" type="submit" id="ocrSaveReview">Save and confirm review</button></div></div>
   </form>
 </dialog>
 <script id="ocrRowsData" type="application/json">{{ocr_rows|tojson}}</script>
@@ -91,5 +96,14 @@
 {% endblock %}
 {% block head_extra %}<style>
 .ppmp-inline-upload{border:1px solid #80b6a1;background:#f2f8f5;margin-bottom:16px}.ppmp-inline-upload h3{margin-top:0}.ppmp-inline-upload-form{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:center}.ppmp-inline-upload-form input[type=file]{width:100%;box-sizing:border-box}.ppmp-inline-upload-form [role=status]{margin-top:8px;overflow-wrap:anywhere}@media(max-width:760px){.ppmp-inline-upload-form{grid-template-columns:1fr}}
+
+.ocr-review-modal.item-review-dialog .modal-footer{position:sticky;bottom:0;z-index:1}
+.ocr-review-modal.item-review-dialog .editor-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.ocr-review-modal.item-review-dialog .editor-grid label{grid-column:auto;font-size:inherit}
+.ocr-review-modal.item-review-dialog .editor-grid .span-6,
+.ocr-review-modal.item-review-dialog .editor-grid .span-7,
+.ocr-review-modal.item-review-dialog .editor-grid .span-8,
+.ocr-review-modal.item-review-dialog .editor-grid .span-12{grid-column:1/-1}
+@media(max-width:600px){.ocr-review-modal.item-review-dialog .editor-grid{grid-template-columns:minmax(0,1fr)}}
 </style>{% endblock %}
-{% block scripts %}<script defer src="{{url_for('static',filename='js/ppmp-editor.js')}}"></script><script defer src="{{url_for('static',filename='js/ppmp-ocr-review.js')}}"></script>{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/ppmp-editor.js')}}"></script><script defer src="{{url_for('static',filename='js/ppmp-ocr-review.js',v='plain-review-1')}}"></script>{% endblock %}

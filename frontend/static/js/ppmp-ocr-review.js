@@ -88,7 +88,8 @@
       option.textContent = `${position + 1}. ${item.fields['Item Name'] || item.fields[labels[0]] || item.item_reference}${item.errors?.length ? ' (needs correction)' : ''}`;
       itemSelect.append(option);
     });
-    itemSelect.value = String(index); itemSelect.hidden = items.length < 2; itemSelect.disabled = saving;
+    document.getElementById('ocrItemNavigation').hidden = items.length < 2;
+    itemSelect.value = String(index); itemSelect.disabled = saving;
     document.getElementById('ocrItemPosition').textContent = `${index + 1} of ${items.length}`;
     previous.disabled = saving || index === 0; next.disabled = saving || index === items.length - 1;
   }
@@ -99,19 +100,14 @@
     item.loaded = {...item.fields};
     item.loadedSpecifications = specificationsOnly(item.fields[specification], item.fields.Quantity, item.fields.Unit, item);
     document.getElementById('ocrTempId').value = item.temp_id; document.getElementById('ocrRevision').value = item.revision;
-    fields.forEach((field, position) => {
-      const label = labels[position], info = item.field_confidence?.[label] || {};
+    for (const field of fields) {
+      const label = field.dataset.fieldLabel;
       field.value = label === specification ? item.loadedSpecifications : displayValue(label, item.fields[label]);
-      const level = info.level || 'Unmapped', badge = document.getElementById(`ocrConfidence${field.dataset.fieldIndex ?? position}`);
-      badge.textContent = level + (!info.human_corrected && typeof info.score === 'number' ? ` · ${Math.round(info.score * 100)}%` : '');
-      badge.className = 'field-confidence ' + String(level).toLowerCase().replace(/\s+/g, '-');
-      badge.title = info.human_corrected ? 'Human correction; this is not an OCR-verified source value.' : 'Mapping evidence score; not a calibrated probability that OCR is correct.';
-      field.closest('label').classList.toggle('needs-attention', !['High', 'Verified', 'Human corrected'].includes(level));
-    });
-    statusBox.replaceChildren();
-    const title = document.createElement('strong'); title.textContent = `${item.item_reference} · Item ${index + 1} of ${items.length}`;
-    const state = document.createElement('span'); state.className = 'badge ' + (item.status === 'Reviewed' ? 'ok' : 'warn');
-    state.textContent = item.status || 'Needs Review'; statusBox.append(title, state);
+    }
+    document.getElementById('ocrReviewTitle').textContent = item.fields['Item Name'] || 'Review PPMP item';
+    document.getElementById('ocrReviewReference').textContent = item.item_reference;
+    statusBox.className = 'badge ' + (item.status === 'Reviewed' ? 'ok' : 'warn');
+    statusBox.textContent = item.status === 'Reviewed' ? 'Reviewed' : 'For Review';
     const evidence = item.field_confidence?._source_evidence;
     const sourceLines = [];
     if (evidence) {
@@ -130,12 +126,15 @@
     document.getElementById('ocrItemEvidence').textContent = sourceLines.join('\n') || 'Item-specific positions were not captured. Compare the full source text.';
     const metadata = item.field_confidence?._document_metadata || {};
     const metadataNode = document.getElementById('ocrDocumentMetadata');
-    if (metadataNode) metadataNode.textContent = ['Source-extracted context', ...['office', 'fiscal_year', 'category'].filter(key => metadata[key]).map(key => `${key.replace('_', ' ')}: ${metadata[key]}`),
-      `Application category: ${dialog.dataset.category}`, item.extraction_method || 'Extraction method not recorded'].join(' · ');
+    if (metadataNode) metadataNode.textContent = [
+      metadata.office && 'Office: ' + metadata.office,
+      metadata.fiscal_year && 'Fiscal year: ' + metadata.fiscal_year,
+      'PPMP category: ' + dialog.dataset.category,
+    ].filter(Boolean).join(' ? ');
     const sourceLink = document.getElementById('ocrOriginalSource'), preview = document.getElementById('ocrSourcePreview');
     sourceLink.hidden = !item.source_url; sourceLink.href = item.source_url || '';
     const extension = (item.source_filename || '').split('.').pop().toLowerCase();
-    document.getElementById('ocrSourceKind').textContent = ({pdf:'PDF document',xlsx:'Excel workbook (native cell extraction)',xlsm:'Excel workbook (native cell extraction)',csv:'CSV (native extraction)',txt:'Text (native extraction)',docx:'Word document (native extraction)'})[extension] || 'Scanned image';
+    document.getElementById('ocrSourceKind').textContent = ({pdf:'PDF document',xlsx:'Excel workbook',xlsm:'Excel workbook',csv:'CSV file',txt:'Text file',docx:'Word document'})[extension] || 'Scanned image';
     preview.hidden = !item.source_url || !['pdf','png','jpg','jpeg','bmp'].includes(extension);
     const sourcePage = Number(evidence?.page);
     preview.dataset.sourceUrl = preview.hidden ? '' : item.source_url + (extension === 'pdf' && Number.isInteger(sourcePage) && sourcePage > 0 ? `#page=${sourcePage}` : '');
