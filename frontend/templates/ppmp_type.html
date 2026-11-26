@@ -32,8 +32,8 @@
 {% for r in ocr_rows %}
 {% set f=r.fields %}
 <tr class="ocr-temp-row" id="ocr-{{r.temp_id}}">
-  <td><input type="checkbox" name="ocr_rows" value="{{r.temp_id}}" aria-label="Select {{r.temp_id}}" {{'checked' if r.temp_id in selected_ocr}}><input type="hidden" name="ocr_revision_{{r.temp_id}}" value="{{r.revision}}"></td>
-  <td><strong>{{r.temp_id}}</strong><span class="badge info ocr-source-badge">OCR Extracted</span></td>
+  <td><input type="checkbox" name="ocr_rows" value="{{r.temp_id}}" aria-label="Select {{r.item_reference}}" {{'checked' if r.temp_id in selected_ocr}}><input type="hidden" name="ocr_revision_{{r.temp_id}}" value="{{r.revision}}"></td>
+  <td><strong>{{r.item_reference}}</strong><span class="badge info ocr-source-badge">OCR Extracted</span></td>
   <td>{{r.get('field_confidence', {}).get('_source_evidence', {}).get('item_number') or 'Not captured'}}</td>
   <td data-ocr-column="description">{{f.get('General Description and Objective of the Project to be Procured','') or f.get('Item Name') or 'Unresolved'}}</td>
   <td data-ocr-column="quantity" class="numeric">{{f.get('Quantity')|quantity if f.get('Quantity') is not none and f.get('Quantity') != '' else 'Unresolved'}}</td>

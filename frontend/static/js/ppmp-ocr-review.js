@@ -85,7 +85,7 @@
     itemSelect.replaceChildren();
     items.forEach((item, position) => {
       const option = document.createElement('option'); option.value = String(position);
-      option.textContent = `${position + 1}. ${item.fields['Item Name'] || item.fields[labels[0]] || item.temp_id}${item.errors?.length ? ' (needs correction)' : ''}`;
+      option.textContent = `${position + 1}. ${item.fields['Item Name'] || item.fields[labels[0]] || item.item_reference}${item.errors?.length ? ' (needs correction)' : ''}`;
       itemSelect.append(option);
     });
     itemSelect.value = String(index); itemSelect.hidden = items.length < 2; itemSelect.disabled = saving;
@@ -109,7 +109,7 @@
       field.closest('label').classList.toggle('needs-attention', !['High', 'Verified', 'Human corrected'].includes(level));
     });
     statusBox.replaceChildren();
-    const title = document.createElement('strong'); title.textContent = `${item.temp_id} · Item ${index + 1} of ${items.length}`;
+    const title = document.createElement('strong'); title.textContent = `${item.item_reference} · Item ${index + 1} of ${items.length}`;
     const state = document.createElement('span'); state.className = 'badge ' + (item.status === 'Reviewed' ? 'ok' : 'warn');
     state.textContent = item.status || 'Needs Review'; statusBox.append(title, state);
     const evidence = item.field_confidence?._source_evidence;

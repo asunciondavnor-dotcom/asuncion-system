@@ -250,6 +250,11 @@ def ppmp_item_filters():
     return values
 
 
+ITEM_REFERENCE_SQL = "('ITEM-' || lpad(id::text, greatest(6, length(id::text)), '0'))"
+
+def item_reference(draft_id):
+    return f"ITEM-{int(draft_id):06d}"
+
 def ppmp_rows(api,ptype,state=_STATE_UNSET):
     filters=ppmp_item_filters()
     page=revision(request.args.get('ocr_page','1'))
@@ -274,7 +279,7 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
     if filters['item_q']:
         visible=('Item Name','General Description and Objective of the Project to be Procured',
                  'Quantity and Size of the Project to be Procured','Quantity','Unit','Estimated Unit Cost','Item Number')
-        where+=" and strpos(lower(concat_ws(' ',temp_code,"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
+        where+=" and strpos(lower(concat_ws(' ',"+ITEM_REFERENCE_SQL+",temp_code,"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
         params.append(filters['item_q'])
     where+=" and ("+approval+"->'_intake_approval_required' is null or "+approval+"->'_item_approval' is not null)"
     count=api['q']('select count(*) total from ppmp_ocr_drafts where '+where,params,one=True)

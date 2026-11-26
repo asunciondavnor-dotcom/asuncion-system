@@ -619,7 +619,7 @@ def review(api,sid):
     elif selected in CATEGORIES:
         where+=' and ppmp_category=? and '+assigned;params.append(selected)
     if search:
-        where+=" and strpos(lower(concat_ws(' ','ITEM-'||lpad(id::text,greatest(6,length(id::text)),'0'),temp_code,fields_json)),lower(?))>0";params.append(search)
+        where+=" and strpos(lower(concat_ws(' ',"+durable.ITEM_REFERENCE_SQL+",temp_code,fields_json)),lower(?))>0";params.append(search)
     summary=api['q'](f'''select count(*) total,
         count(*) filter(where ppmp_category='DBM' and {assigned}) dbm,
         count(*) filter(where ppmp_category='NON-DBM' and {assigned}) non_dbm,
@@ -636,7 +636,7 @@ def review(api,sid):
         value['confidence']=api['_json_dict'](row['confidence_json'])
         value['suggestion']=value['confidence'].get('_category_suggestion') or dict(category=category(row['ppmp_category']),evidence='existing saved category')
         value['source_number']=(value['confidence'].get('_source_evidence') or {}).get('item_number','')
-        value['item_reference']=f"ITEM-{row['id']:06d}"
+        value['item_reference']=durable.item_reference(row['id'])
         items.append(value)
     def workspace_url(**changes):
         values={key:request.args[key] for key in request.args if key in ('q','sort','category','page','sheet') or key.startswith('h_')}

@@ -282,6 +282,7 @@ def _json_dict(value):
 def _ocr_draft_to_ui(row):
     d = dict(row or {})
     d['temp_id'] = d.get('temp_code') or f'OCR-TEMP-{int(d.get("id") or 0):06d}'
+    d['item_reference'] = durable_ocr.item_reference(d.get('id') or 0)
     d['fields'] = _json_dict(d.get('fields_json'))
     d['field_confidence'] = _json_dict(d.get('confidence_json'))
     d['human_reviewed'] = bool(d.get('reviewed'))
