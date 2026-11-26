@@ -3681,11 +3681,13 @@ def nlp_approve(id):
 @app.route('/nlp/algorithms')
 def nlp_algorithms():
     model_state = trained_nlp_model_status()
+    manifest = model_state.get('manifest') or {}
     return render_template(
         'nlp_algorithms.html',
         active='nlp',
         algorithms=algorithm_comparison(),
-        active_model=(model_state.get('manifest') or {}).get('deployed_model'),
+        active_model=manifest.get('deployed_model'),
+        active_model_release=manifest.get('runtime'),
         title='NLP Algorithms',
     )
 

@@ -3,9 +3,21 @@
 <div class="toolbar page-head"><h2>PR–PO Model Information</h2><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
 <section class="card">
   {% if active_model %}<p><strong>Active PR–PO model</strong> {{active_model}}</p>{% endif %}
-  <h3>{% if active_model %}Archived FastText validation results{% else %}Published validation results{% endif %}</h3>
-  <p>The three models used the same 1,326 training pairs and 492 validation pairs. The Random Forest scored 72.36% overall and 73.53% on the 306 unseen-name pairs.</p>
-  <p>These results use proposed labels on controlled examples. A separate human-reviewed test set is still needed to measure accuracy on municipal records. All three scores fall below Monday’s 75% target on this validation set.</p>
+  {% if active_model_release == 'asuncion-fasttext-calibrated-svm-v1' %}
+  <h3>Deployed model benchmark</h3>
+  {# Counts from the two 1,045-pair frozen evaluations of the deployed serving release. #}
+  {% set results = [('Acceptable', 449, 522), ('Needs Recanvass', 520, 522), ('Needs Review', 524, 524), ('Reject', 521, 522)] %}
+  {% set correct = results|sum(attribute=1) %}
+  {% set total = results|sum(attribute=2) %}
+  <p><strong>{{'%.2f'|format(100 * correct / total)}}% overall accuracy</strong> ({{'{:,}'.format(correct)}} of {{'{:,}'.format(total)}} pairs). <strong>Zero false Acceptable predictions.</strong></p>
+  <div class="table-scroll"><table class="table">
+    <thead><tr><th scope="col">Expected classification</th><th scope="col">Correct predictions</th><th scope="col">Per-class recall</th></tr></thead>
+    <tbody>{% for label, count, support in results %}<tr><th scope="row">{{label}}</th><td>{{count}} / {{support}}</td><td>{{'%.2f'|format(100 * count / support)}}%</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p>Recall shows how often the model found each expected class. A false Acceptable prediction would mark a pair Acceptable when its expected class calls for action. These results apply to the frozen benchmark. Accuracy on independently reviewed municipal PR-PO pairs remains unmeasured.</p>
+  {% endif %}
+  <details><summary>Archived FastText validation results</summary>
+  <p>The earlier comparison used 1,326 training pairs and 492 validation pairs with proposed labels on controlled examples.</p>
   <div class="table-scroll"><table class="table">
     <thead><tr><th scope="col">Model</th><th scope="col">Unseen-name accuracy</th><th scope="col">Unseen-family accuracy</th><th scope="col">Overall accuracy</th><th scope="col">Macro precision</th><th scope="col">Macro recall</th><th scope="col">Macro F1</th></tr></thead>
     <tbody>{% for a in algorithms %}<tr><th scope="row">{{a.name}} {% if a.deployed %}<span class="badge ok">Deployed</span>{% endif %}</th>{% for metric in a.metrics %}<td>{{'%.2f'|format(metric)}}%</td>{% endfor %}</tr>{% endfor %}</tbody>
@@ -17,6 +29,7 @@
     <dt>F1</dt><dd>The harmonic mean of precision and recall. A low value in either reduces F1.</dd>
     <dt>Macro average</dt><dd>Each of the four classes counts equally in the average.</dd>
     <dt>Prediction confidence</dt><dd>The model’s score for one pair. Reviewers confirm the actual requirements and findings from the source documents.</dd></dl>
+  </details>
   </details>
 </section>
 <section class="card section-gap">
