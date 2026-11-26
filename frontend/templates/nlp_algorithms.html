@@ -47,17 +47,4 @@
   </details>
   </details>
 </section>
-<section class="card section-gap">
-  <h3>Four predicted classifications</h3>
-  <p>These simulated cases illustrate the expected classifications. Actual predictions depend on the details available in the PR and PO.</p>
-  <div class="table-scroll"><table class="table">
-    <thead><tr><th scope="col">Classification</th><th scope="col">When it applies</th><th scope="col">Simulated PR–PO example</th></tr></thead>
-    <tbody>
-      <tr><th scope="row">Acceptable</th><td>The PO satisfies the PR item, quantity, unit and requirements.</td><td>The PR asks for 20 reams of A4 80 gsm paper, and the PO lists all three details.</td></tr>
-      <tr><th scope="row">Needs Recanvass</th><td>A known difference needs a corrected quotation or another canvass.</td><td>The PR asks for 20 reams, and the PO offers 15.</td></tr>
-      <tr><th scope="row">Needs Review</th><td>A missing or ambiguous detail needs human verification.</td><td>The PR specifies 80 gsm, and the PO omits the paper weight.</td></tr>
-      <tr><th scope="row">Reject</th><td>A missing or different item prevents the PO from fulfilling the PR.</td><td>The PR asks for paper, and the PO lists toner instead.</td></tr>
-    </tbody>
-  </table></div>
-</section>
 {% endblock %}
