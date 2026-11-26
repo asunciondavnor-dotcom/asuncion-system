@@ -5,16 +5,31 @@
   {% if active_model %}<p><strong>Active PR–PO model</strong> {{active_model}}</p>{% endif %}
   {% if active_model_release == 'asuncion-fasttext-calibrated-svm-v1' %}
   <h3>Deployed model benchmark</h3>
-  {# Counts from the two 1,045-pair frozen evaluations of the deployed serving release. #}
-  {% set results = [('Acceptable', 449, 522), ('Needs Recanvass', 520, 522), ('Needs Review', 524, 524), ('Reject', 521, 522)] %}
-  {% set correct = results|sum(attribute=1) %}
-  {% set total = results|sum(attribute=2) %}
-  <p><strong>{{'%.2f'|format(100 * correct / total)}}% overall accuracy</strong> ({{'{:,}'.format(correct)}} of {{'{:,}'.format(total)}} pairs). <strong>Zero false Acceptable predictions.</strong></p>
-  <div class="table-scroll"><table class="table">
-    <thead><tr><th scope="col">Expected classification</th><th scope="col">Correct predictions</th><th scope="col">Per-class recall</th></tr></thead>
-    <tbody>{% for label, count, support in results %}<tr><th scope="row">{{label}}</th><td>{{count}} / {{support}}</td><td>{{'%.2f'|format(100 * count / support)}}%</td></tr>{% endfor %}</tbody>
+  <p>Frozen benchmark of 2,090 controlled PR&ndash;PO pairs.</p>
+  {# Measured on the checksum-pinned serving release. See the benchmark replay evidence. #}
+  <div class="table-scroll"><table class="table" aria-label="Benchmark summary">
+    <thead><tr><th scope="col">Metric</th><th scope="col">Result</th><th scope="col">Meaning</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Overall accuracy</th><td><strong>96.36%</strong> (2,014 / 2,090)</td><td>Correct predictions</td></tr>
+      <tr><th scope="row">Macro precision</th><td><strong>96.80%</strong></td><td>How often predicted labels were right</td></tr>
+      <tr><th scope="row">Macro recall</th><td><strong>96.36%</strong></td><td>How often the model found each class</td></tr>
+      <tr><th scope="row">Macro F1</th><td><strong>96.35%</strong></td><td>Balance of precision and recall</td></tr>
+      <tr><th scope="row">Multiclass MCC</th><td><strong>0.9531</strong></td><td>Overall agreement. Perfect is 1.0.</td></tr>
+      <tr><th scope="row">False Acceptable rate</th><td><strong>0.00%</strong> (0 / 1,568)</td><td>Cases wrongly marked Acceptable</td></tr>
+      <tr><th scope="row">Valid match rejection rate</th><td><strong>13.98%</strong> (73 / 522)</td><td>Valid matches wrongly marked Reject</td></tr>
+    </tbody>
   </table></div>
-  <p>Recall shows how often the model found each expected class. A false Acceptable prediction would mark a pair Acceptable when its expected class calls for action. These results apply to the frozen benchmark. Accuracy on independently reviewed municipal PR-PO pairs remains unmeasured.</p>
+  <h3>Results by classification</h3>
+  <div class="table-scroll"><table class="table" aria-label="Results by classification">
+    <thead><tr><th scope="col">Classification</th><th scope="col">Correct / Total</th><th scope="col">Precision</th><th scope="col">Recall</th><th scope="col">F1</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Acceptable</th><td>449 / 522</td><td>100.00%</td><td>86.02%</td><td>92.48%</td></tr>
+      <tr><th scope="row">Needs Recanvass</th><td>520 / 522</td><td>100.00%</td><td>99.62%</td><td>99.81%</td></tr>
+      <tr><th scope="row">Needs Review</th><td>524 / 524</td><td>99.62%</td><td>100.00%</td><td>99.81%</td></tr>
+      <tr><th scope="row">Reject</th><td>521 / 522</td><td>87.56%</td><td>99.81%</td><td>93.29%</td></tr>
+    </tbody>
+  </table></div>
+  <p>All four classes exceeded <strong>85% recall</strong> on this benchmark. Accuracy on independently reviewed municipal records remains unmeasured.</p>
   {% endif %}
   <details><summary>Archived FastText validation results</summary>
   <p>The earlier comparison used 1,326 training pairs and 492 validation pairs with proposed labels on controlled examples.</p>

@@ -139,7 +139,7 @@
     "templates/legacy_signatory_unresolved.html": "3b0366e75f20578f12c26cf4ebd5d6401fade5dde3d198dcc8cd50175b1e77ba",
     "templates/login.html": "1db414b98b4b786fc160f310a988b04ed7bb75a54db1caf9260bf7b892e4bf9d",
     "templates/nlp.html": "646c2d5359f64d35be3aa1d3736ef3b04aef43292d20da6e1ccb8b30a266b9e2",
-    "templates/nlp_algorithms.html": "cb7b5554fd283808808a615a4e79d9e5b671936bd144f61de3948282359041a8",
+    "templates/nlp_algorithms.html": "de864c05875300bda9ad2ab4c98de063031f1c4794885deb6ffc77e6d1c0c7d8",
     "templates/nlp_prediction_preview.html": "caaff38817957f7167ac6786d89b977b3d6c81d5e4547aea62f0bbcb1c573032",
     "templates/operation_error.html": "ebf5feef68eaec631d67d68154a0e23a47df62f4f99af3ea8bacfe3ff757b572",
     "templates/par_review.html": "0ef12fb67d4665a8f900c6bde0392d005d480cde6b0be58c6672d96e496d5d10",
