@@ -32,7 +32,12 @@ def main():
     text = pytesseract.image_to_string(image, lang='eng', config='--psm 6', timeout=25)
     releases.require('SYNTHETIC' in text and '42' in text, 'RENDER_NATIVE_OCR_FAILED')
     model_name = None
-    if os.environ.get('PSMS_RENDER_PR_PO_MODEL') == '1':
+    if os.environ.get('PSMS_PR_PO_FASTTEXT') == '1':
+        from offline_ocr_mapper import load_local_model
+        from pr_po_fasttext_release import checked_model
+        releases.require(load_local_model() is not None, 'RENDER_OCR_ENCODER_FAILED')
+        model_name = checked_model(os.environ['PSMS_PR_PO_FASTTEXT_MANIFEST_SHA256']).version
+    elif os.environ.get('PSMS_RENDER_PR_PO_MODEL') == '1':
         from pr_po_release import VERSION, checked_model
         active_model = checked_model()
         model_name = VERSION

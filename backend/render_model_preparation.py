@@ -24,6 +24,9 @@ def _ready(kind, config):
     if kind == 'semantic':
         from offline_ocr_mapper import semantic_model_ready
         return semantic_model_ready(release)
+    if config.get('PR_PO_FASTTEXT_MANIFEST_SHA256'):
+        from pr_po_fasttext_release import prepared
+        return prepared()
     if config.get('PR_PO_LINEAR_MODEL_ENABLED'):
         if config.get('PR_PO_ENSEMBLE_ACTIVE'):
             from pr_po_preview_release import prepared
@@ -40,12 +43,16 @@ def _load(kind, config):
     from render_resource_logging import measure
 
     failed = True
+    fasttext = config.get('PR_PO_FASTTEXT_MANIFEST_SHA256')
     linear = kind == 'rf' and config.get('PR_PO_LINEAR_MODEL_ENABLED')
-    operation = 'model_preparation_pr_po' if linear else 'model_preparation_' + kind
+    operation = 'model_preparation_pr_po' if kind == 'rf' and (fasttext or linear) else 'model_preparation_' + kind
     try:
         with measure(operation), model_memory_scope():
             if kind == 'semantic':
                 load_local_model()
+            elif fasttext:
+                from pr_po_fasttext_release import prepare
+                prepare(fasttext)
             elif linear:
                 from pr_po_release import prepare
                 prepare()

@@ -233,7 +233,10 @@ def _load_local_model():
         if (release is not None
                 and release['manifest_sha256'] == '3b6b141c5e798222331662d564eff4e363a605fc5d9b422ab6b68224493dd22b'
                 and os.environ.get('PSMS_RENDER_OCR_BUDGET') == '1'):
-            if os.environ.get('PSMS_RENDER_PR_PO_MODEL') == '1':
+            if os.environ.get('PSMS_PR_PO_FASTTEXT') == '1':
+                from pr_po_release import load_semantic_encoder
+                model = load_semantic_encoder()
+            elif os.environ.get('PSMS_RENDER_PR_PO_MODEL') == '1':
                 from pr_po_release import SemanticEncoder
                 model = SemanticEncoder()
             else:

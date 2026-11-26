@@ -2,8 +2,8 @@
 {% block content %}
 <div class="toolbar page-head"><h2>PR–PO Model Information</h2><a class="btn" href="{{url_for('nlp')}}">Back to PR–PO Review</a></div>
 <section class="card">
-  {% if config.get('PR_PO_LINEAR_MODEL_ENABLED') %}<p><strong>Active PR–PO model</strong> {{active_model}}</p>{% endif %}
-  <h3>{% if config.get('PR_PO_LINEAR_MODEL_ENABLED') %}Archived FastText validation results{% else %}Published validation results{% endif %}</h3>
+  {% if active_model %}<p><strong>Active PR–PO model</strong> {{active_model}}</p>{% endif %}
+  <h3>{% if active_model %}Archived FastText validation results{% else %}Published validation results{% endif %}</h3>
   <p>The three models used the same 1,326 training pairs and 492 validation pairs. The Random Forest scored 72.36% overall and 73.53% on the 306 unseen-name pairs.</p>
   <p>These results use proposed labels on controlled examples. A separate human-reviewed test set is still needed to measure accuracy on municipal records. All three scores fall below Monday’s 75% target on this validation set.</p>
   <div class="table-scroll"><table class="table">

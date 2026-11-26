@@ -27,23 +27,29 @@ def configure(config):
     config['PR_PO_ENSEMBLE_ACTIVE'] = os.environ.get('PSMS_PR_PO_ENSEMBLE_ACTIVE') == '1'
 
 
-def load(*, root=ROOT):
-    from inference_releases import safe_path
-    from pr_po_linear_runtime import load_parameters
-    from pr_po_model_assessment import Assessor
+def load_semantic_encoder(*, root=ROOT):
+    from inference_releases import metadata, safe_path
     from pr_po_onnx_encoder import MAPPED_ORT_VERSION, MiniLMEncoder, ort
 
     if ort.__version__ != MAPPED_ORT_VERSION:
         raise RuntimeError('PR_PO_ENCODER_RUNTIME_VERSION')
     artifacts = safe_path(root, VERSION, exists=False)
     tokenizer = safe_path(root, f'{ORIGINAL}/semantic/tokenizer.json')
-    from inference_releases import metadata
     pin = metadata(ORIGINAL, dependencies=False, profiles=('semantic_ocr',))['manifest']['artifacts']['semantic/tokenizer.json']
     with tokenizer.open('rb') as stream:
         if hashlib.file_digest(stream, 'sha256').hexdigest() != pin['sha256']:
             raise RuntimeError('PR_PO_TOKENIZER_INTEGRITY')
+    return MiniLMEncoder(tokenizer.parent, safe_path(artifacts, 'minilm-fp32.ort'), ARTIFACTS['minilm-fp32.ort'])
+
+
+def load(*, root=ROOT):
+    from inference_releases import safe_path
+    from pr_po_linear_runtime import load_parameters
+    from pr_po_model_assessment import Assessor
+
+    artifacts = safe_path(root, VERSION, exists=False)
     parameters = load_parameters(safe_path(artifacts, 'linear-svm.json'), ARTIFACTS['linear-svm.json'])
-    encoder = MiniLMEncoder(tokenizer.parent, safe_path(artifacts, 'minilm-fp32.ort'), ARTIFACTS['minilm-fp32.ort'])
+    encoder = load_semantic_encoder(root=root)
     return Assessor(**parameters, encode=lambda texts: encoder.encode(texts, normalize_embeddings=True), version=VERSION)
 
 

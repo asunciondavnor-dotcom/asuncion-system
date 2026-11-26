@@ -29,6 +29,7 @@ def prepare(destination, *, base=ROOT, strict_context=False):
     releases.require(not destination.exists(), 'RENDER_NEW_OUTPUT_REQUIRED')
     if strict_context:
         allowed=set(manifest['files'])|{'Dockerfile.render','Dockerfile.render.dockerignore',
+            'Dockerfile.fasttext-render','Dockerfile.fasttext-render.dockerignore',
             'deploy/render_runtime_manifest.json','deploy/render_delivery.py',
             'deploy/render_image_check.py','deploy/render_start.py'}
         actual={p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file()}

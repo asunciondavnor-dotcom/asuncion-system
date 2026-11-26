@@ -628,7 +628,12 @@ def pr_po_predictor(app):
     from render_model_preparation import ready_for_processing
     require_available(app.config)
     with ready_for_processing('rf', app.config):
-        if app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+        if app.config.get('PR_PO_FASTTEXT_MANIFEST_SHA256'):
+            from pr_po_fasttext_release import assessor
+            from render_resource_logging import measure
+            with measure('pr_po_model_inference'):
+                yield assessor()
+        elif app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
             if app.config.get('PR_PO_ENSEMBLE_ACTIVE'):
                 from pr_po_preview_release import assessor
             else:
@@ -685,7 +690,10 @@ def nlp_page(api):
                 metadata=raw.get('model_metadata') or {}
                 metadata_hash=hashlib.sha256(json.dumps(metadata,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
                 artifact_hashes={}
-                if assessor is not None and api['app'].config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+                config = api['app'].config
+                if assessor is not None and config.get('PR_PO_FASTTEXT_MANIFEST_SHA256'):
+                    artifact_hashes = {'serving-manifest.json': config['PR_PO_FASTTEXT_MANIFEST_SHA256']}
+                elif assessor is not None and config.get('PR_PO_LINEAR_MODEL_ENABLED'):
                     from pr_po_release import ARTIFACTS
                     artifact_hashes=dict(ARTIFACTS)
                     if api['app'].config.get('PR_PO_ENSEMBLE_ACTIVE'):

@@ -70,7 +70,10 @@ configure_nlp_runtime(app, BASE_DIR)
 import render_model_preparation
 from pr_po_release import configure as configure_pr_po_release
 configure_pr_po_release(app.config)
-app.config['PR_PO_ENSEMBLE_PREVIEW'] = bool(app.config.get('PR_PO_LINEAR_MODEL_ENABLED')
+from pr_po_fasttext_release import configure as configure_fasttext_release
+configure_fasttext_release(app.config)
+app.config['PR_PO_ENSEMBLE_PREVIEW'] = bool(not app.config.get('PR_PO_FASTTEXT_MANIFEST_SHA256')
+                                         and app.config.get('PR_PO_LINEAR_MODEL_ENABLED')
                                          and os.environ.get('PSMS_RENDER_PR_PO_PREVIEW') == '1')
 app.config['RENDER_MODEL_PREPARATION'] = render_model_preparation.enabled(app.config)
 app.config['PR_PO_ITEM_COMPARISON_ENABLED'] = os.environ.get('PSMS_ITEM_COMPARISON_ENABLED', '1') == '1'
@@ -1986,7 +1989,10 @@ def trained_nlp_model_status():
                 'diagnostic_code':'INFERENCE_DISABLED'}
     if render_model_preparation.enabled(app.config):
         ready = render_model_preparation.state('rf', app.config) == 'ready'
-        if app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
+        if app.config.get('PR_PO_FASTTEXT_MANIFEST_SHA256'):
+            from pr_po_fasttext_release import NAME, VERSION
+            model = {'deployed_model': NAME, 'runtime': VERSION}
+        elif app.config.get('PR_PO_LINEAR_MODEL_ENABLED'):
             if app.config.get('PR_PO_ENSEMBLE_ACTIVE'):
                 from pr_po_preview_release import NAME, VERSION
             else:
