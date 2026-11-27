@@ -12,9 +12,9 @@
 {% endmacro %}
 {% macro finding_table(findings) %}
 <div class="review-table-wrap"><table class="table review-items-table">
-  <thead><tr><th>Source check</th><th>Requested evidence</th><th>Offered evidence</th><th>Technical finding</th></tr></thead>
+  <thead><tr><th>Source check</th><th>Requested evidence</th><th>Offered evidence</th><th>Finding</th></tr></thead>
   <tbody>{% for check in findings %}
-    <tr><td><b>{{ check.attribute }}</b><br><span class="badge {{ 'info' if check.state == 'PASS' else 'warn' }}">{{ {'PASS': 'Source check satisfied', 'VIOLATED': 'Technical difference', 'WORDING_DIFFERENCE': 'Wording difference', 'UNKNOWN': 'Unsupported or uncertain'}.get(check.state, 'Unsupported or uncertain') }}</span></td>
+    <tr><td><b>{{ check.attribute }}</b><br><span class="badge {{ 'info' if check.state == 'PASS' else 'warn' }}">{{ {'PASS': 'Source check satisfied', 'VIOLATED': 'Specification difference', 'WORDING_DIFFERENCE': 'Wording difference', 'UNKNOWN': 'Unsupported or uncertain'}.get(check.state, 'Unsupported or uncertain') }}</span></td>
       <td>{{ evidence(check.requested_evidence) }}</td><td>{{ evidence(check.offered_evidence) }}</td>
       <td>{{ check.explanation }}{% if check.question %}<p><b>Human review:</b> {{ check.question }}</p>{% endif %}
       {% for value in check.unresolved_evidence or [] %}<p><q>{{ value.quote }}</q></p>{% endfor %}</td></tr>

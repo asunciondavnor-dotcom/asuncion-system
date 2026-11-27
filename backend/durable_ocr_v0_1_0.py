@@ -397,24 +397,19 @@ def ppmp_batch_review(api,ptype):
     return response
 
 
-def ppmp_source(api,ptype,sid,diagnostics=False):
-    """Original private bytes or administrator diagnostics, checked per request."""
+def ppmp_source(api,ptype,sid):
+    """Serve the original private document after checking ownership."""
     if ptype not in ('DBM','NON-DBM','LIB'):abort(404)
-    if diagnostics and not api['is_admin']():abort(403)
-    row=api['q']("select filename,extension,content,extraction from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and (d.ppmp_category=? or (d.ppmp_category='UNASSIGNED' and d.status='CATEGORY_REVIEW'))))",
+    row=api['q']("select extension,content from psms_documents.sources where id=? and owner_id=? and kind='ppmp' and (category=? or exists(select 1 from ppmp_ocr_drafts d where d.source_id=psms_documents.sources.id and d.owner_id=? and (d.ppmp_category=? or (d.ppmp_category='UNASSIGNED' and d.status='CATEGORY_REVIEW'))))",
                  (str(sid),_uid(),ptype,_uid(),ptype),one=True)
     if not row:abort(404)
-    if diagnostics:
-        from flask import make_response
-        response=make_response(api['render_template']('ppmp_source_diagnostics.html',source=row,ptype=ptype,active='ppmp'))
-    else:
-        from io import BytesIO
-        from flask import send_file
-        ext=row['extension']
-        mime={'.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.bmp':'image/bmp'}
-        response=send_file(BytesIO(bytes(row['content'])),mimetype=mime.get(ext,'application/octet-stream'),
-                           download_name='source-document'+ext,as_attachment=ext not in mime,max_age=0)
-        response.headers['Content-Security-Policy']="sandbox; default-src 'none'"
+    from io import BytesIO
+    from flask import send_file
+    ext=row['extension']
+    mime={'.pdf':'application/pdf','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.bmp':'image/bmp'}
+    response=send_file(BytesIO(bytes(row['content'])),mimetype=mime.get(ext,'application/octet-stream'),
+                       download_name='source-document'+ext,as_attachment=ext not in mime,max_age=0)
+    response.headers['Content-Security-Policy']="sandbox; default-src 'none'"
     response.headers.update({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'})
     return response
 

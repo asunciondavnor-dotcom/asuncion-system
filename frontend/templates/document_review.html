@@ -33,11 +33,12 @@
 {% if active=='po' and status!='Approved' %}<p class="notice">This PO remains {{status}}. Saved comparison evidence and an authorized PR–PO relationship review are required before separate final approval. <a href="{{url_for('nlp')}}">Open PR–PO Review</a>.</p>{% endif %}
 {% if retired_nlp %}<p class="warning-box">Historical comparison record. Its evidence is retained; its old approval action is retired. <a href="{{url_for('nlp')}}">Open PR–PO Review</a>.</p>{% endif %}
 
+{% set linked_records = linked_records|rejectattr('diagnostic')|list %}
 {% if linked_records %}
 <div class="card review-card">
   <h3>Linked Procurement Records</h3>
   <div class="linked-record-grid">
-    {% for field in linked_records if (not field.diagnostic and not review_field_is_diagnostic(field.label)) or session.get('role')=='Admin' %}
+    {% for field in linked_records if not field.diagnostic and not review_field_is_diagnostic(field.label) %}
     <div class="linked-record">
       <span>{{field.label}}</span>
       {% if field.url %}<a href="{{ field.url }}" target="_blank"><b>{{display_value(field.value)}}</b></a>{% else %}<b>{{display_value(field.value)}}</b>{% endif %}
@@ -47,9 +48,10 @@
 </div>
 {% endif %}
 
+{% set summary = summary|rejectattr('diagnostic')|list %}
 {% if summary %}
 <div class="review-summary-grid">
-  {% for field in summary if (not field.diagnostic and not review_field_is_diagnostic(field.label)) or session.get('role')=='Admin' %}
+  {% for field in summary if not field.diagnostic and not review_field_is_diagnostic(field.label) %}
   <div class="card review-summary-card">
     <div class="muted">{{ field.label }}</div>
     <div class="review-summary-value">{{display_value(field.value)}}</div>
@@ -103,7 +105,7 @@
             <details class="stored-fields">
               <summary>Item {{item.index}} details</summary>
               <div class="stored-field-grid">
-                {% for detail in item.details if not detail.diagnostic %}
+                {% for detail in item.details if not detail.diagnostic and not review_field_is_diagnostic(detail.label) %}
                 <div class="stored-field {{ 'primary-field' if detail.is_primary else '' }}">
                   <span>{{ detail.label }}</span>
                   <b>{{detail.value|month_year if procurement_display and detail.value is string and detail.label in ['Start of Procurement Activity','End of Procurement Activity','Expected Delivery/Implementation Period'] else display_value(detail.value)}}</b>
@@ -126,24 +128,6 @@
 {% if section.optional or historical_pr %}</details>{% endif %}
 {% endif %}
 {% endfor %}
-
-{% if session.get('role')=='Admin' and active not in ['aoq','po','nlp'] %}
-<details class="card advanced-box"><summary>Technical evidence (authorized review)</summary>
-{% for section in item_sections %}{% for item in section['items'] %}
-<details><summary>{{ section.title }} · {{ item.line_id }}</summary>
-  {% for detail in item.details if detail.diagnostic or detail.technical_value %}<p><b>{{ detail.label }}</b></p><pre class="diagnostic-text">{{detail.technical_value or detail.value}}</pre>{% endfor %}
-</details>
-{% endfor %}{% endfor %}
-{% for block in text_blocks if block.diagnostic or review_public_value(block.content)!=block.content %}
-<div class="card review-card">
-  <details class="review-text-block" {% if loop.first and not procurement_display %}open{% endif %}>
-    <summary>{{ block.title }}</summary>
-    <pre>{{block.content|tojson(indent=2) if block.content is mapping or (block.content is sequence and block.content is not string) else block.content}}</pre>
-  </details>
-</div>
-{% endfor %}
-</details>
-{% endif %}
 
 {% for block in text_blocks if not block.diagnostic %}
 <div class="card review-card"><h3>{{block.title}}</h3><div class="source-value">{{display_value(block.content)}}</div></div>

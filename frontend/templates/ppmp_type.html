@@ -22,7 +22,7 @@
 
 {% if ocr_state %}
 {% set structure=ocr_state.get('structured', {}) %}
-{% if structure.get('review_candidates') %}<details class="ocr-review"><summary>Uncertain Source Regions ({{structure.review_candidates|length}}) — no item drafts created</summary><p class="muted">Compare these regions with the source. Insufficient row evidence prevents automatic item creation.</p>{% for candidate in structure.review_candidates %}<pre class="raw-ocr-pre">{{candidate.evidence.text}}</pre>{% endfor %}</details>{% endif %}
+{% if structure.get('review_candidates') %}<p class="notice">Some text could not be read as items. Check the original document for missing items.</p>{% endif %}
 {% endif %}
 <label class="full" id="ppmpCreationConfirmation"><input type="checkbox" name="confirm_reviewed" value="yes" aria-describedby="ppmpCreationFeedback" {% if creation_validation and creation_validation.field=='confirmation' %}aria-invalid="true"{% endif %}> I confirm the selected saved values for official PPMP creation. Procurement approval remains separate.</label>
 <div class="filters"><button class="btn small blue" type="button" id="edit_selected_btn">Review selected source items</button><button class="btn small blue" type="button" id="reviewSelectedOCR" disabled>Review selected extracted items</button><button class="btn small" type="submit" name="action" value="refresh" formnovalidate>Refresh</button></div>

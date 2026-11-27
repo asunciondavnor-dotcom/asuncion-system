@@ -3,7 +3,7 @@
 {% set pending=d.pending_checks|default(0) %}
 {% set verdict=d.verdict|default('') %}
 {% set label='Confirmed difference' if verdict=='Needs Recanvass' else 'Needs Review' if verdict=='Needs Review' and d.status!='Historical evidence unavailable' else d.status %}
-<span class="badge {{'ok' if label=='Match' else 'warn'}}" title="{{d.percentage_basis|default('No defined discrepancy calculation is available.')}}">{{'Source checks pending' if source_only and label=='Needs Review' else label}}{% if show_percentage and verdict not in ('Needs Review','Needs Recanvass') and d.percentage != 'Not calculated' and (not pending or d.percentage_final|default(false)) %} ({{d.percentage}}){% endif %}</span>
+<span class="badge {{'ok' if label=='Match' else 'warn'}}">{{'Source checks pending' if source_only and label=='Needs Review' else label}}{% if show_percentage and verdict not in ('Needs Review','Needs Recanvass') and d.percentage != 'Not calculated' and (not pending or d.percentage_final|default(false)) %} ({{d.percentage}}){% endif %}</span>
 {% if pending %}<span class="muted">{{pending}} {{'check needs' if pending==1 else 'checks need'}} review</span>{% endif %}
 {% if d.source_note|default('') %}<small class="muted">{{d.source_note}}</small>{% endif %}
 {%- endmacro %}
@@ -21,7 +21,7 @@
     {% if d.model_match %}
     <h3>PR–PO match result</h3>
     {{outcome_badge(d.model_match.label,d.model_match.score)}}
-    {% if score is number %}<details><summary>Model class score</summary>{{outcome_badge(prediction,score)}}</details>{% endif %}
+    {% if prediction and prediction != d.model_match.label %}<p>Predicted classification {{outcome_badge(prediction)}}</p>{% endif %}
     {% else %}
     <h3>Predicted classification</h3>
     {{outcome_badge(prediction,score)}}
