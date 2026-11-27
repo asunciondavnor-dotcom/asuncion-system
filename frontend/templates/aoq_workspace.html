@@ -26,7 +26,6 @@
 {% if ocr_data or official %}
 <section class="card" id="aoq-draft-review" {% if ocr_data %}data-active-draft{% endif %}>
 <div class="toolbar"><div><h3>{{'AOQ '+official.no if official else 'Review quotation'}}</h3><p>{{official.ocr_filename if official else ocr_data.ocr_filename}}</p></div></div>
-{% if workspace_warnings %}<div class="warning-box"><strong>Review required</strong><ul>{% for warning in workspace_warnings %}<li>{{warning|replace(' Linked PR details remain comparison only.','')}}</li>{% endfor %}</ul></div>{% endif %}
 {% if ocr_data %}<form method="post" action="{{url_for('aoq')}}" id="aoqReviewForm">
 <input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" id="aoqAction" value="save_selection"><input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}"><input type="hidden" name="draft_revision" value="{{ocr_data.draft_revision}}"><input type="hidden" name="offer_supplier_index" value="{{ocr_data.offer_supplier_index|default('')}}"><input type="hidden" name="offer_review_token" value="{{ocr_data.offer_review_token|default('')}}"><input type="hidden" name="review_supplier_index" value="{{matrix.selected}}">
 <label>Choose Supplier<select name="winner_index" required><option value="">Choose supplier</option>{% for index in matrix.indices %}<option value="{{index}}" {{'selected' if ocr_data.get('selected_winner_index',-1)|string==index|string}}>{{matrix.suppliers[index].supplier}}</option>{% endfor %}</select></label>

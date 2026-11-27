@@ -152,7 +152,7 @@
 </div>
 {% if (summary.total==0 or extraction.get('method')=='OCR of numbered PPMP item column') and source.owner_id==session.get('user_id') and (not run or run.status!='PROCESSING') %}
 <details class="card"><summary>Add a missing item from the original file</summary><form method="post" class="form-grid"><input type="hidden" name="action" value="add"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">{% for label in labels %}<label>{{field_names.get(label, label)}}<textarea name="field_{{loop.index0}}" maxlength="5000"></textarea></label>{% endfor %}<label><input type="checkbox" name="confirm_review" value="yes" required> I copied the item from the saved original</label><button class="btn">Save for review</button></form></details>{% endif %}
-{% if extraction.get('warnings') %}<div class="warning-box"><strong>Check the items against the original file</strong><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}{% if session.get('role') == 'Admin' %}
+{% if session.get('role') == 'Admin' %}
 <details class="card intake-original">
   <summary>Original extracted data</summary>
   <p class="muted">These are the values first read from the document. You can correct them using Review in the item table above.</p>

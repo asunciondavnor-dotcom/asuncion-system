@@ -18,5 +18,4 @@
 {% if source.kind=='aoq' %}</div>{% endif %}
 {% if events_truncated %}<p class="notice">Only the latest 300 recorded events are displayed. Older audit evidence remains stored.</p>{% endif %}
 {% if links_truncated %}<p class="notice">Only the first 100 linked records are displayed. Existing records remain stored.</p>{% endif %}
-{% if extraction.get('warnings') %}<div class="warning-box"><ul>{% for warning in extraction.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}
 {% endblock %}

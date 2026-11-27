@@ -3460,7 +3460,7 @@ def aoq():
             selected_pr = dict(selected_pr_row)
             selected_pr['items_list'] = parse_items(selected_pr.get('items'))
     return render_template(
-        'aoq_workspace.html', workspace_tab=workspace_tab, workspace_quotes=aoq_workspace.quotations(ocr_data or {}), workspace_warnings=(ocr_data or {}).get('warnings',[]), independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
+        'aoq_workspace.html', workspace_tab=workspace_tab, workspace_quotes=aoq_workspace.quotations(ocr_data or {}), independent_aoq=independent_aoq, active='aoq', rows=rows, prs=pr_previews,
         aoq_counts=aoq_counts,
         ocr_data=ocr_data or None, selected_pr=selected_pr, title='Quotation Evaluation (AOQ)',
         history=document_history.listing(globals(),'aoq') if workspace_tab=='history' else None,
@@ -3492,7 +3492,6 @@ def aoq_review(id):
     return render_template('aoq_workspace.html',active='aoq',title='Quotation Evaluation (AOQ)',
         workspace_tab='workspace',rows=[],ocr_data=None,official_aoq=d,linked_po=linked_po,
         workspace_quotes=aoq_workspace.quotations(reviewed,d),
-        workspace_warnings=parse_json_list(d.get('extraction_warnings')),
         independent_aoq=workflow_active,history=None)
 
 @app.route('/aoq/<int:id>/source')

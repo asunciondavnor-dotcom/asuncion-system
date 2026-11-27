@@ -61,7 +61,6 @@
         <div><span>Completeness</span><b>{{ocr_data.confidence}}%</b></div>
       </div>
       <p class="muted">Completeness measures populated AOQ source fields. It does not establish a winning supplier or procurement approval. PR correspondence is reviewed later against the created PO.</p>
-      {% if ocr_data.warnings %}<div class="warning-box"><b>Please review:</b><ul>{% for warning in ocr_data.warnings %}<li>{{warning}}</li>{% endfor %}</ul></div>{% endif %}
     </section>
   </div>
 
