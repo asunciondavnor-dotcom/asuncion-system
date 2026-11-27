@@ -14,6 +14,9 @@ from private_document_uploads import validate, extraction_path
 
 CATEGORIES=('DBM','NON-DBM','LIB')
 WORKBOOKS = {'.xlsx', '.xlsm'}
+PENDING_ITEM = """status not in ('CANCELLED','CONVERTED_TO_PPMP') and converted is not true
+    and case when confidence_json IS JSON OBJECT
+        then confidence_json::jsonb->'_item_approval' is null else true end"""
 ITEM_COLUMNS = {
     'Item Name': 'Item Name',
     'Description': 'General Description and Objective of the Project to be Procured',
@@ -511,6 +514,30 @@ def workspace_source(api,sid):
                     (identifier,durable._uid(),api['is_admin']()),one=True)
 
 
+def clear_pending_items(api, sid):
+    with processing.transaction(api) as (con, uid):
+        source = con.execute(
+            """select sha256 from psms_documents.sources where id=? and owner_id=? and kind='ppmp'""",
+            (sid, uid)).fetchone()
+        if not source:
+            abort(404)
+        processing.ready(con)
+        processing.lock(con, uid, source['sha256'])
+        latest = con.execute(
+            """select status from psms_documents.processing_runs where source_id=? and owner_id=?
+               order by started_at desc,id desc limit 1""", (sid, uid)).fetchone()
+        if latest and latest['status'] == 'PROCESSING':
+            abort(409, description='Wait for this file to finish processing before clearing its pending items.')
+        cleared = con.execute(
+            f"""update ppmp_ocr_drafts set status='CANCELLED',revision=revision+1,updated_at=?
+                where source_id=? and owner_id=? and {PENDING_ITEM}""",
+            (api['now'](), sid, uid)).rowcount
+        if cleared:
+            durable.audit(api, con, 'Cleared Pending Items from Upload', 'PPMP', sid)
+    flash(f'Cleared {cleared} pending item(s) from this upload.' if cleared else 'This upload has no pending items to clear.')
+    return redirect(url_for('ppmp_intake_review', sid=sid))
+
+
 def review(api,sid):
     sid=str(sid)
     admin=api['is_admin']()
@@ -548,6 +575,8 @@ def review(api,sid):
             flash(f'Official item approved and assigned to {destination}.','success')
             return redirect(url_for('ppmp_intake_review',sid=sid,page=page))
         if source['owner_id']!=durable._uid():abort(403)
+        if action == 'clear_pending':
+            return clear_pending_items(api, sid)
         if action not in ('verify','add'):abort(400)
         if request.form.get('confirm_review',request.form.get('confirm_category'))!='yes':
             abort(400,description='Confirm that the item details match the original.')
@@ -608,7 +637,8 @@ def review(api,sid):
         or any(len(request.args.getlist(key))>1 for key in ('sheet','category','q','sort','page'))):abort(400)
     sorts={'source':'id','name':"lower(fields_json::jsonb->>'Item Name'),id",'name_desc':"lower(fields_json::jsonb->>'Item Name') desc,id",'status':'status,id','newest':'id desc'}
     if sort not in sorts:abort(400)
-    source_where='source_id=? and owner_id=?';source_params=[sid,source['owner_id']]
+    upload_where='source_id=? and owner_id=?'
+    source_where=upload_where;source_params=[sid,source['owner_id']]
     # A historical malformed/absent evidence payload has no known worksheet;
     # it must not prevent opening All worksheets or be rewritten here. PG17.
     sheet_expression="(case when confidence_json IS JSON OBJECT then confidence_json::jsonb #>> '{_source_evidence,worksheet}' end)"
@@ -618,7 +648,8 @@ def review(api,sid):
     if selected_sheet and selected_sheet not in sheets:abort(400,description='Choose a saved source worksheet.')
     if selected_sheet:
         source_where+=' and '+sheet_expression+'=?';source_params.append(selected_sheet)
-    where=source_where;params=list(source_params)
+    visible_source_where=source_where+" and status<>'CANCELLED'"
+    where=visible_source_where;params=list(source_params)
     assigned="(converted or case when confidence_json IS JSON OBJECT then confidence_json::jsonb->'_item_approval' is not null else false end)"
     if selected=='UNASSIGNED':where+=' and not '+assigned
     elif selected in CATEGORIES:
@@ -631,8 +662,19 @@ def review(api,sid):
         count(*) filter(where ppmp_category='NON-DBM' and {assigned}) non_dbm,
         count(*) filter(where ppmp_category='LIB' and {assigned}) lib,
         count(*) filter(where not {assigned}) unclassified,
-        count(*) filter(where converted) official
-        from ppmp_ocr_drafts where '''+source_where,tuple(source_params),one=True)
+        count(*) filter(where converted) official,
+        count(*) filter(where {PENDING_ITEM}) pending
+        from ppmp_ocr_drafts where '''+visible_source_where,tuple(source_params),one=True)
+    upload_counts = summary
+    if selected_sheet:
+        upload_counts = api['q'](
+            f"""select count(*) filter(where {PENDING_ITEM}) pending
+                from ppmp_ocr_drafts where {upload_where}""", (sid, source['owner_id']), one=True)
+    can_clear = (source['owner_id'] == durable._uid() and upload_counts['pending'] > 0
+                 and (not run or run['status'] != 'PROCESSING'))
+    has_cleared_items = (not upload_counts['pending'] and api['q'](
+        """select id from ppmp_ocr_drafts where source_id=? and owner_id=? and status='CANCELLED' limit 1""",
+        (sid, source['owner_id']), one=True) is not None)
     drafts=api['q']('select * from ppmp_ocr_drafts where '+where+' order by '+sorts[sort]+' limit 21 offset ?',(*params,(page-1)*20))
     has_next=len(drafts)>20;drafts=drafts[:20]
     items=[]
@@ -653,7 +695,7 @@ def review(api,sid):
     return render_template('ppmp_intake.html',active='ppmp',title='Upload Items',source=source,
         uploads=workspace_sources(api),
         items=items,labels=api['ppmp_review_labels'](),categories=CATEGORIES,page=page,has_next=has_next,
-        summary=summary,run=run,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url,
+        summary=summary,run=run,can_clear=can_clear,has_cleared_items=has_cleared_items,selected=selected,selected_sheet=selected_sheet,sheets=sheets,search=search,sort=sort,workspace_url=workspace_url,
         original_worksheets=extracted_worksheet_groups(extraction) if admin else [])
 
 
