@@ -79,7 +79,7 @@
   function updateSelection() {
     const count = selectedIds().length;
     reviewSelected.disabled = !count;
-    document.getElementById('ocrSelectionCount').textContent = `${count} OCR item(s) selected on this page, including selected rows hidden by search. Changing pages clears selection.`;
+    document.getElementById('ocrSelectionCount').textContent = `${count} uploaded item${count === 1 ? '' : 's'} selected on this page, including selected rows hidden by search. Changing pages clears selection.`;
   }
   function renderNavigation() {
     itemSelect.replaceChildren();
@@ -123,7 +123,7 @@
       }
       if (evidence.warnings?.length) sourceLines.push(`\nReview warnings:\n${evidence.warnings.join('\n')}`);
     }
-    document.getElementById('ocrItemEvidence').textContent = sourceLines.join('\n') || 'Item-specific positions were not captured. Compare the full source text.';
+    document.getElementById('ocrItemEvidence').textContent = sourceLines.join('\n') || 'Open the original document to check this item.';
     const metadata = item.field_confidence?._document_metadata || {};
     const metadataNode = document.getElementById('ocrDocumentMetadata');
     if (metadataNode) metadataNode.textContent = [

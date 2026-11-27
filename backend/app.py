@@ -290,7 +290,7 @@ def _ocr_draft_to_ui(row):
     status = str(d.get('status') or 'NEEDS_REVIEW').upper()
     d['status_code'] = status
     d['status'] = {
-        'EXTRACTED': 'OCR Extracted',
+        'EXTRACTED': 'Needs Review',
         'NEEDS_REVIEW': 'Needs Review',
         'REVIEWED': 'Reviewed',
         'CONVERTED_TO_PPMP': 'Converted',

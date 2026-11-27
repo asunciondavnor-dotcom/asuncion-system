@@ -92,7 +92,7 @@
         {% set shown = item.public if item.public is defined else item %}
         <tr>
           <td><b>{{item.index}}</b></td>
-          <td class="source-item"><span class="id-chip mini secondary">{{item.source_number or 'Not recorded'}}</span></td>
+          <td class="source-item">{% if item.source_number %}<span class="id-chip mini secondary">{{item.source_number}}</span>{% endif %}</td>
           <td><b>{{display_value(shown.item)}}</b></td>
           <td class="review-description">{{display_value(shown.description)}}</td>
           <td class="{{'quantity' if procurement_display}}">{% if shown.quantity is mapping or (shown.quantity is sequence and shown.quantity is not string) or shown.quantity is boolean %}{{display_value(shown.quantity)}}{% else %}{{shown.quantity|quantity if procurement_display else display_value(shown.quantity)}}{% endif %}</td>
