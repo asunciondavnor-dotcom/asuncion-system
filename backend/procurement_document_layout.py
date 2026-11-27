@@ -12,7 +12,7 @@ def norm(value):
 
 
 ALIASES = {
-    'item_no': ('item no', 'itemno', 'item number', 'no', 'item code'),
+    'item_no': ('item no', 'itemno', 'item number', 'no', 'item code', 'item id'),
     'name': ('general description and objective of the project to be procured', 'item', 'item name', 'item particulars', 'description', 'item description', 'material description',
              'product description', 'description of goods', 'particulars', 'general description', 'general description and objective',
              'description specifications', 'description specification', 'item description technical specifications'),
@@ -52,6 +52,14 @@ def header_role(label):
         monetary=ROLE_BY_LABEL.get(re.sub(r'\s+(?:php|pesos?)$', '', normalized),'')
         if monetary in {'unit_cost','budget','amount'}:role=monetary
     return role
+
+
+def item_id_column(headers):
+    """Prefer the explicit Item ID over a separate row number in the file."""
+    explicit = [index for index, label in enumerate(headers) if norm(label) == 'item id']
+    if explicit:
+        return explicit[0] if len(explicit) == 1 else None
+    return next((index for index, label in enumerate(headers) if header_role(label) == 'item_no'), None)
 
 
 def table_header(rows, *, start_only=False):

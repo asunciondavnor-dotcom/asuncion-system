@@ -1355,6 +1355,15 @@ app.jinja_env.globals.update(review_public_value=review_public_value,
                             review_field_is_diagnostic=review_field_is_diagnostic)
 
 
+def original_item_reference(item):
+    evidence = parse_json_object(item.get('_OCR Field Evidence'))
+    source = parse_json_object(evidence.get('_source_evidence'))
+    values = (source.get('item_number'), item.get('Item ID'), item.get('Item Number'), item.get('Item No'))
+    number = next((str(value).strip() for value in values
+                   if type(value) in (str, int, float) and str(value).strip()), '')
+    return {'number': number, 'filename': item.get('_OCR Filename') or ''}
+
+
 def review_item_rows(items, document_no='DOC'):
     """Normalize different procurement item schemas for one consistent review table.
 
@@ -1381,12 +1390,8 @@ def review_item_rows(items, document_no='DOC'):
         line_id = next((str(item.get(k)).strip() for k in id_keys if item.get(k)), '')
         if not line_id:
             line_id = f'{document_no}-ITEM-{index:02d}'
-        evidence = item.get('_OCR Field Evidence') or {}
-        evidence = evidence.get('_source_evidence', {}) if isinstance(evidence, dict) else {}
-        if not isinstance(evidence, dict):
-            evidence = {}
         source_id = str(item.get('_Source Item ID') or '').strip()
-        source_number = str(evidence.get('item_number') or item.get('Item Number') or item.get('Item No') or '').strip()
+        reference = original_item_reference(item)
         item_name = value_any(
             item, 'Item Name', 'Item Description', 'item', 'name',
             'General Description and Objective of the Project to be Procured',
@@ -1430,7 +1435,8 @@ def review_item_rows(items, document_no='DOC'):
             'index': index,
             'line_id': line_id,
             'source_id': source_id or '—',
-            'source_number': source_number,
+            'source_number': reference['number'],
+            'source_filename': reference['filename'],
             'item': review_value(item_name),
             'description': review_value(description),
             'quantity': review_value(quantity),
@@ -3490,13 +3496,21 @@ def aoq_review(id):
     import aoq_workspace
     d['winning_items']=parse_items(d.get('winning_offer'))
     suppliers=parse_items(d.get('suppliers'))
-    linked_po=q('select id,no from po where aoq_id=? order by id limit 1',(id,),one=True)
+    linked_pos = q('select * from po where aoq_id=? order by id limit 2', (id,))
+    linked_po = linked_pos[0] if linked_pos else None
+    original_references = {}
+    if len(linked_pos) == 1 and d.get('status') == 'Approved':
+        po_items = parse_items(linked_po.get('items'))
+        matches = revised_procurement.approved_pr_item_map(globals(), linked_po, po_items)
+        original_references = aoq_workspace.original_references(d['winning_items'], po_items, {
+            position: original_item_reference(item) for position, item in matches.items()
+        })
     private=q("select payload from psms_documents.aoq_drafts where official_aoq_id=? and owner_id=? and status='CONFIRMED' order by updated_at desc limit 1",(id,session.get('user_id')),one=True) if workflow_active else None
     reviewed=parse_json_object(private.get('payload')) if private else {}
     reviewed['suppliers']=suppliers
     return render_template('aoq_workspace.html',active='aoq',title='Quotation Evaluation (AOQ)',
         workspace_tab='workspace',rows=[],ocr_data=None,official_aoq=d,linked_po=linked_po,
-        workspace_quotes=aoq_workspace.quotations(reviewed,d),
+        workspace_quotes=aoq_workspace.quotations(reviewed,d), original_references=original_references,
         independent_aoq=workflow_active,history=None)
 
 @app.route('/aoq/<int:id>/source')
@@ -3548,12 +3562,14 @@ def po():
         d['offer_summary'] = '; '.join(f"{value_any(item, 'item', 'Item Name', default='Item')}: {quantity_text(item.get('qty'))} {item.get('unit') or '—'} at {source_money_text(item.get('unit_cost'))}"
                                       for item in parse_items(a['winning_offer']))
         aoqs.append(d)
-    selected_po=None;selected_aoq=None;review_items=[];can_approve=False
+    selected_po=None;selected_aoq=None;review_items=[];can_approve=False;original_references={}
     if request.args.get('po_id'):
         po_id=revised_procurement.identifier(request.args['po_id'])
         row=q('select p.*,a.no aoq_no from po p left join aoq a on a.id=p.aoq_id where p.id=?',(po_id,),one=True)
         if not row:abort(404)
         selected_po=dict(row);review_items=parse_items(selected_po.get('items'))
+        matches = revised_procurement.approved_pr_item_map(globals(), selected_po, review_items)
+        original_references = {position: original_item_reference(item) for position, item in matches.items()}
         can_approve=(selected_po.get('status')=='For Review' and revised_procurement.enabled(globals())
                      and revised_procurement.final_contract_ready(globals()))
     elif request.args.get('aoq_id'):
@@ -3562,7 +3578,7 @@ def po():
         if selected_aoq:review_items=parse_items(selected_aoq.get('winning_offer'))
     return render_template('po.html',active='po',rows=rows,aoqs=aoqs,title='Purchase Orders',
         revised_workflow_active=revised_procurement.enabled(globals()),selected_po=selected_po,
-        selected_aoq=selected_aoq,review_items=review_items,can_approve=can_approve)
+        selected_aoq=selected_aoq,review_items=review_items,can_approve=can_approve,original_references=original_references)
 
 @app.route('/po/<int:id>/view')
 def po_review(id):

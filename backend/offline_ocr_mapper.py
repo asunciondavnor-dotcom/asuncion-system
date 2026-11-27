@@ -871,10 +871,12 @@ def _rows_from_table(table: Dict[str, Any], start_index: int, candidates=None, n
             worksheet_row=(table.get('row_numbers') or [None] * len(rows))[body_index],
             uncertain_header_columns=[c for r, c in uncertain_headers if r == header_index],
             columns=[dict(index=i, label=label) for i, label in enumerate(headers)])
+        from procurement_document_layout import item_id_column
+        id_column = item_id_column(headers)
         rec['field_confidence']['_source_evidence'] = dict(
             source=table.get('source', ''), page=table.get('page'), worksheet=table.get('worksheet'),
             row=rec['field_confidence']['_table_source']['worksheet_row'] or body_index+1,
-            item_number=next((row[i] for i, role in enumerate(roles) if role == 'item_no' and i < len(row)), ''),
+            item_number=row[id_column] if id_column is not None and id_column < len(row) else '',
             headers=headers, text=' | '.join(row),
             header_cells=[cell for cell in table.get('cells', []) if cell.get('row') == header_index+1],
             cells=[cell for cell in table.get('cells', []) if cell.get('row') == body_index+1 or

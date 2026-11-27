@@ -219,10 +219,10 @@
         Object.assign(items.find(item => item.temp_id === saved.temp_id), saved, {errors: []});
         const tr = document.getElementById(`ocr-${saved.temp_id}`);
         if (tr) {
-          tr.cells[3].textContent = saved.fields[labels[0]] || saved.fields['Item Name'] || 'Unresolved';
-          tr.cells[4].textContent = saved.fields.Quantity || 'Unresolved'; tr.cells[5].textContent = saved.fields.Unit || 'Unresolved';
-          tr.cells[6].textContent = moneyText(saved.fields['Estimated Unit Cost']);
-          tr.cells[7].textContent = moneyText(saved.fields['Estimated Budget Allocation (Php)']); tr.cells[8].textContent = saved.status + (saved.status === 'Reviewed' ? ' · Ready for PPMP' : ' · Human verification not recorded');
+          tr.querySelector('[data-ocr-column="description"]').textContent = saved.fields[labels[0]] || saved.fields['Item Name'] || 'Unresolved';
+          tr.querySelector('[data-ocr-column="quantity"]').textContent = saved.fields.Quantity || 'Unresolved'; tr.querySelector('[data-ocr-column="unit"]').textContent = saved.fields.Unit || 'Unresolved';
+          tr.querySelector('[data-ocr-column="unit-cost"]').textContent = moneyText(saved.fields['Estimated Unit Cost']);
+          tr.querySelector('[data-ocr-column="budget"]').textContent = moneyText(saved.fields['Estimated Budget Allocation (Php)']); tr.querySelector('[data-ocr-column="status"]').textContent = saved.status + (saved.status === 'Reviewed' ? ' · Ready for PPMP' : ' · Human verification not recorded');
           tr.querySelector('[name^="ocr_revision_"]').value = saved.revision;
         }
       }

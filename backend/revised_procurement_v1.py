@@ -1382,6 +1382,36 @@ def approve_po(api,identifier_value):
     flash('PO approved. It is available for PR–PO NLP verification; receiving eligibility remains separately protected.')
     return redirect(url_for('po',po_id=identifier_value))
 
+def approved_pr_item_map(api, po, po_items):
+    """Return PR lines keyed by zero-based PO position after relationship approval."""
+    if not po.get('pr_id') or not isinstance(po_items, list) or not po_items:
+        return {}
+    reviews = api['q'](
+        """select n.review_mapping, n.pr_items_hash, n.po_items_hash, r.items as pr_items
+           from nlp n join pr r on r.id=n.pr_id
+           where n.pr_id=? and n.po_id=? and n.status='Approved'
+             and n.workflow_version=2 and n.reviewed_by is not null and n.reviewed_at is not null
+           limit 2""", (po['pr_id'], po['id']))
+    if len(reviews) != 1:
+        return {}
+    review = reviews[0]
+    pr_raw = review.get('pr_items')
+    po_raw = po.get('items')
+    if (not isinstance(pr_raw, str) or not isinstance(po_raw, str)
+            or evidence.fingerprint(pr_raw) != review.get('pr_items_hash')
+            or evidence.fingerprint(po_raw) != review.get('po_items_hash')):
+        return {}
+    pr_items = api['parse_items'](pr_raw)
+    mapping = api['parse_json_list'](review.get('review_mapping'))
+    if (not isinstance(pr_items, list) or len(pr_items) != len(po_items)
+            or len(mapping) != len(pr_items)
+            or any(type(position) is not int or not 1 <= position <= len(po_items) for position in mapping)
+            or len(set(mapping)) != len(mapping)
+            or not all(isinstance(item, dict) for item in pr_items)):
+        return {}
+    return {position - 1: item for position, item in zip(mapping, pr_items)}
+
+
 def po_has_review(api,po_id):
     row=api['q']("""select exists(select 1 from psms_documents.pr_po_reviews r
         join nlp n on n.id=r.nlp_id where r.po_id=? and n.status='Approved') ready""",(po_id,),one=True)

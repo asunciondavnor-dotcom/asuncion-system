@@ -279,7 +279,8 @@ def ppmp_rows(api,ptype,state=_STATE_UNSET):
     if filters['item_q']:
         visible=('Item Name','General Description and Objective of the Project to be Procured',
                  'Quantity and Size of the Project to be Procured','Quantity','Unit','Estimated Unit Cost','Item Number')
-        where+=" and strpos(lower(concat_ws(' ',"+ITEM_REFERENCE_SQL+",temp_code,"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
+        where+=" and strpos(lower(concat_ws(' ',"+ITEM_REFERENCE_SQL+",temp_code,source_filename,"
+        where+=approval+"->'_source_evidence'->>'item_number',"+','.join(fields+"->>'"+key+"'" for key in visible)+")),lower(?))>0"
         params.append(filters['item_q'])
     where+=" and ("+approval+"->'_intake_approval_required' is null or "+approval+"->'_item_approval' is not null)"
     count=api['q']('select count(*) total from ppmp_ocr_drafts where '+where,params,one=True)

@@ -203,6 +203,8 @@ def photographed_ppmp_items(path, deadline=None):
 
 def workbook_items(document):
     """Read explicit item columns, retaining the original worksheet and row."""
+    from procurement_document_layout import item_id_column
+
     items = []
     for table in document.get('tables', []):
         rows = table['rows']
@@ -218,6 +220,7 @@ def workbook_items(document):
                      if headers.count(key.casefold()) == 1}
         if not {'Item Name', 'Quantity'} <= positions.keys():
             continue
+        id_column = item_id_column(rows[index])
         cell_evidence = defaultdict(list)
         for cell in table.get('cells', []):
             cell_evidence[cell.get('worksheet_row')].append(cell)
@@ -231,7 +234,9 @@ def workbook_items(document):
             if values['Item Name'].casefold() == 'item name' and values['Quantity'].casefold() == 'quantity':
                 continue
             line = numbers[offset]
+            item_number = row[id_column] if id_column is not None and id_column < len(row) else None
             evidence = dict(worksheet=table.get('worksheet'), row=line, headers=[str(v) for v in rows[index]],
+                            item_number=str(item_number).strip() if item_number is not None else '',
                             cells=row, text=' | '.join(str(v) for v in row),
                             cell_evidence=cell_evidence[line])
             items.append(dict(fields=fields, field_confidence={'_source_evidence': evidence},
@@ -619,7 +624,8 @@ def review(api,sid):
     elif selected in CATEGORIES:
         where+=' and ppmp_category=? and '+assigned;params.append(selected)
     if search:
-        where+=" and strpos(lower(concat_ws(' ',"+durable.ITEM_REFERENCE_SQL+",temp_code,fields_json)),lower(?))>0";params.append(search)
+        evidence_json="case when confidence_json IS JSON OBJECT then confidence_json::jsonb else '{}'::jsonb end"
+        where+=" and strpos(lower(concat_ws(' ',"+durable.ITEM_REFERENCE_SQL+",temp_code,source_filename,fields_json,("+evidence_json+")->'_source_evidence'->>'item_number')),lower(?))>0";params.append(search)
     summary=api['q'](f'''select count(*) total,
         count(*) filter(where ppmp_category='DBM' and {assigned}) dbm,
         count(*) filter(where ppmp_category='NON-DBM' and {assigned}) non_dbm,

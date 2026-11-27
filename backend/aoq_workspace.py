@@ -13,6 +13,21 @@ def validate_document(document):
         raise ValueError('This is a PPMP planning document, not supplier quotations. Upload it through PPMP; choose an AOQ quotation file here.')
 
 
+def original_references(winning_items, po_items, references):
+    """Follow the saved PO-to-AOQ IDs for the approved supplier lines."""
+    if not references or not all(isinstance(item, dict) for item in (*winning_items, *po_items)):
+        return {}
+    aoq_ids = [item.get('_AOQ Item ID') for item in winning_items]
+    po_source_ids = [item.get('_Source Item ID') for item in po_items]
+    if (not all(isinstance(value, str) and value for value in aoq_ids + po_source_ids)
+            or len(set(aoq_ids)) != len(aoq_ids)
+            or len(set(po_source_ids)) != len(po_source_ids)
+            or set(aoq_ids) != set(po_source_ids)):
+        return {}
+    by_id = {po_source_ids[position]: reference for position, reference in references.items()}
+    return {position: by_id[item_id] for position, item_id in enumerate(aoq_ids) if item_id in by_id}
+
+
 def quotations(preview, official=None):
     if not official:
         try:validate_document(preview)
