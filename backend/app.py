@@ -1364,6 +1364,24 @@ def original_item_reference(item):
     return {'number': number, 'filename': item.get('_OCR Filename') or ''}
 
 
+def review_item_description(item):
+    """Read the saved item description for display across document formats."""
+    explicit = value_any(item, 'Description / Specification', 'Description', 'description',
+                         'specification', 'Specifications', 'Technical Specifications')
+    if explicit:
+        return review_public_value(explicit)
+    name = value_any(item, 'Item Name', 'item', 'name', 'Item')
+    for key in ('Item Description', 'General Description and Objective of the Project to be Procured',
+                'Remarks', 'remarks'):
+        value = item.get(key)
+        if value and str(value).strip().casefold() != str(name).strip().casefold():
+            return review_public_value(value)
+    return ''
+
+
+app.jinja_env.globals['review_item_description'] = review_item_description
+
+
 def review_item_rows(items, document_no='DOC'):
     """Normalize different procurement item schemas for one consistent review table.
 
@@ -1397,11 +1415,7 @@ def review_item_rows(items, document_no='DOC'):
             'General Description and Objective of the Project to be Procured',
             default='Item'
         )
-        description = value_any(
-            item, 'Description / Specification', 'Description', 'description',
-            'specification', 'Remarks', 'remarks',
-            default=''
-        )
+        description = review_item_description(item)
         quantity = value_any(
             item, 'received_qty', 'Quantity', 'qty', 'quantity',
             'Quantity and Size of the Project to be Procured', default='—'

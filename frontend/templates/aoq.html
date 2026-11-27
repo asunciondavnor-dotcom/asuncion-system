@@ -47,7 +47,7 @@
         <div><span>Items</span><b>{{selected_pr.items_list|length}}</b></div>
       </div>
       <div class="table-scroll"><table class="table compact-table"><tr><th>#</th><th>Requested Item / Specification</th><th>Quantity / Unit</th></tr>
-        {% for item in selected_pr.items_list %}<tr><td>{{loop.index}}</td><td><b>{{ item.get('item') or item.get('Article') or item.get('General Description and Objective of the Project to be Procured') or 'Requested Item' }}</b><br><span class="muted">{{ item.get('description') or item.get('Description / Specification') or item.get('Quantity and Size of the Project to be Procured') or '' }}</span></td><td>{{ (item.get('qty') if item.get('qty') is not none else item.get('Quantity') if item.get('Quantity') is not none else item.get('Quantity and Size of the Project to be Procured'))|quantity }} {{ item.get('unit') or item.get('Unit') or '' }}</td></tr>{% endfor %}
+        {% for item in selected_pr.items_list %}<tr><td>{{loop.index}}</td><td><b>{{ item.get('item') or item.get('Article') or item.get('General Description and Objective of the Project to be Procured') or 'Requested Item' }}</b><br><span class="muted">{{ review_item_description(item) or item.get('Quantity and Size of the Project to be Procured') or '' }}</span></td><td>{{ (item.get('qty') if item.get('qty') is not none else item.get('Quantity') if item.get('Quantity') is not none else item.get('Quantity and Size of the Project to be Procured'))|quantity }} {{ item.get('unit') or item.get('Unit') or '' }}</td></tr>{% endfor %}
       </table></div>
     </details>{% endif %}
 
