@@ -2800,6 +2800,10 @@ def ppmp_dataset():
     )
 
 
+def ppmp_source_label(source_type):
+    return 'From uploaded file' if source_type == 'OCR' else source_type
+
+
 @app.route('/ppmp')
 def ppmp_home():
     raw_rows=paged_q('select * from ppmp order by id desc')
@@ -2808,6 +2812,7 @@ def ppmp_home():
         d=dict(r)
         d['items_list']=parse_items(d.get('items'))
         payload = ppmp_source_payload(d)
+        d['source_label'] = ppmp_source_label(d.get('source_type'))
         d['item_count']=len(payload['items'])
         d['item_preview']=item_preview_from_json(d.get('items'), limit=2, include_offer_name=True)
         d['total']=payload['total']
@@ -2846,7 +2851,7 @@ def ppmp_review(id):
         document_no=d['no'], status=status, created_at=d.get('created_at'),
         linked_records=[
             {'label': 'PPMP Category', 'value': d.get('type') or '—'},
-            {'label': 'Source Type', 'value': d.get('source_type') or 'Manual / Imported'},
+            {'label': 'Source Type', 'value': ppmp_source_label(d.get('source_type')) or 'Manual / Imported'},
         ],
         summary=[
             {'label': 'Office', 'value': d.get('office') or '—'},
