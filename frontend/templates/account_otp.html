@@ -18,7 +18,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{{heading}} · Asuncion</title>
   <link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}">
-  <link rel="stylesheet" href="{{url_for('static',filename='css/integrated.css')}}">
+  <link rel="stylesheet" href="{{url_for('static',filename='css/integrated.css',v='recovery-2')}}">
   <link rel="icon" href="{{url_for('static',filename='images/asuncion-seal.png')}}">
 </head>
 <body class="recovery-page">
@@ -50,9 +50,7 @@
         {{request_form()}}
       {% endif %}
       <a class="btn recovery-back" href="{{url_for('account') if kind=='verify' and session.get('logged_in') else url_for('login')}}">{{'Back to My Account' if kind=='verify' and session.get('logged_in') else 'Back to sign in'}}</a>
-      {% if kind=='forgot' and otp_enabled %}
-        <p class="recovery-switch">First time signing in? <a href="{{url_for('account_otp.public',mode='activate')}}">Set up your account</a></p>
-      {% elif kind=='activate' %}
+      {% if kind=='activate' %}
         <p class="recovery-switch">Already set a password? <a href="{{url_for('account_otp.public')}}">Forgot Password?</a></p>
       {% endif %}
     </div>
