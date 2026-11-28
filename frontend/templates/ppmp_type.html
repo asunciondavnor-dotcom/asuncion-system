@@ -1,21 +1,28 @@
-{% extends 'base.html' %}{% from 'ui.html' import extracted_item_fields %}{% block content %}
-<div class="breadcrumb"><a href="{{url_for(home_endpoint)}}">Home</a><span>›</span><a href="{{url_for('ppmp_home')}}">PPMP</a><span>›</span>{{ptype}}</div>
-<div class="toolbar page-head"><div><h2>PPMP - {{ptype}}</h2><p class="muted">{{'Department of Budget and Management (DBM)' if ptype=='DBM' else ptype}} category</p></div><div class="actions"><a class="btn small" href="{{url_for('ppmp_home')}}">Back to PPMP</a><button class="btn primary" form="ppmpSourceForm" name="action" value="create_ppmp" data-ppmp-create>{{icon()}}Create Official PPMP</button></div></div>
+{% extends 'base.html' %}
+{% from 'ui.html' import icon, extracted_item_fields, editor_fields %}
+{% from 'procurement_ui.html' import aoq_icon %}
+{% block content %}
+<div class="ppmp-workspace ppmp-category-page">
+<nav class="breadcrumb" aria-label="Breadcrumb"><a href="{{url_for(home_endpoint)}}">Home</a><span aria-hidden="true">›</span><a href="{{url_for('ppmp_home')}}">PPMP</a><span aria-hidden="true">›</span><span aria-current="page">{{ptype}}</span></nav>
+<div class="toolbar ppmp-page-heading"><div class="ppmp-panel-heading"><span class="ppmp-mark">{{icon()}}</span><div><h2>PPMP - {{ptype}}</h2><p class="muted">{{'Department of Budget and Management (DBM)' if ptype=='DBM' else ptype}} category</p></div></div><div class="actions"><a class="btn" href="{{url_for('ppmp_home')}}">{{aoq_icon('previous')}} Back to PPMP</a><button class="btn primary" form="ppmpSourceForm" name="action" value="create_ppmp" data-ppmp-create>{{icon()}}Create Official PPMP</button></div></div>
 {% set item_filters=item_filters|default({'item_q':'','item_sort':'source','item_review':'','item_source':''}) %}
 {% set draft_page=draft_page|default({'page':1,'total':ocr_rows|length,'has_next':false}) %}
-<form method="get" class="filters" data-auto-filters data-record-navigation aria-label="PPMP source item filters">
+<section class="card ppmp-filter-panel" aria-labelledby="ppmp-source-filters">
+<h3 id="ppmp-source-filters">Find source items</h3>
+<form method="get" class="ppmp-filter-grid" data-auto-filters data-record-navigation>
 <input type="hidden" name="_nav" value="{{navigation_token()}}"><input type="hidden" name="ocr_source" value="{{request.args.get('ocr_source','all')}}">
-<label>Find source items<input type="search" name="item_q" aria-label="Search PPMP items" value="{{item_filters.item_q}}" maxlength="160" placeholder="Item, original ID or filename"></label>
+<label>Item, original ID or filename<span class="ppmp-search">{{aoq_icon('search')}}<input type="search" name="item_q" aria-label="Search PPMP items" value="{{item_filters.item_q}}" maxlength="160" placeholder="Search item, original ID or filename"></span></label>
 <label>Source<select name="item_source">{% for value,label in [('','All available sources'),('extracted','Extracted document drafts'),('workbook','Workbook source items')] %}<option value="{{value}}" {{'selected' if item_filters.item_source==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Review status<select name="item_review">{% for value,label in [('','All active items'),('NEEDS_REVIEW','Review not recorded'),('REVIEWED','Human review recorded')] %}<option value="{{value}}" {{'selected' if item_filters.item_review==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Sort within source groups<select name="item_sort">{% for value,label in [('source','Recorded source order'),('name','Item name A–Z'),('name_desc','Item name Z–A')] %}<option value="{{value}}" {{'selected' if item_filters.item_sort==value}}>{{label}}</option>{% endfor %}</select></label>
 <button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('ppmp_type',ptype=ptype,ocr_source=request.args.get('ocr_source','all'))}}" data-record-navigation>Reset filters</a>
 </form>
+</section>
 <form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <p id="ppmpCreationFeedback" class="notice" data-category="error" role="alert" tabindex="-1" {% if not creation_validation %}hidden{% endif %}>{{creation_validation.message if creation_validation else ''}}</p>
 {% set active_source = namespace(count=0) %}{% for item in ocr_rows if ocr_state and item.source_id|string==ocr_state.source_id|string %}{% set active_source.count=active_source.count+1 %}{% endfor %}
 {% if active_source.count %}
-<div class="ocr-result-banner"><div><strong>{{active_source.count}} active extracted draft{{'' if active_source.count==1 else 's'}} from this upload on this page</strong><span>{{ocr_state.filename or 'Uploaded document'}}</span></div><div class="actions"><button class="btn small" name="action" value="clear_ocr" type="submit" formnovalidate>Clear extraction</button></div></div>
+<div class="ocr-result-banner ppmp-draft-banner"><div class="ppmp-panel-heading"><span class="ppmp-mark">{{icon()}}</span><div><strong>{{active_source.count}} active extracted draft{{'' if active_source.count==1 else 's'}} from this upload on this page</strong><span>{{ocr_state.filename or 'Uploaded document'}}</span></div></div><div class="actions"><button class="btn small" name="action" value="clear_ocr" type="submit" formnovalidate>Clear extraction</button></div></div>
 {% else %}
 <p class="notice" role="status" id="ocrEmptyState">No active extracted drafts from the selected upload on this page. Saved originals and review history remain in Document History.{% if ocr_rows %} Other active uploads are listed below.{% endif %}</p>
 {% endif %}
@@ -25,8 +32,8 @@
 {% if structure.get('review_candidates') %}<p class="notice">Some text could not be read as items. Check the original document for missing items.</p>{% endif %}
 {% endif %}
 <label class="full" id="ppmpCreationConfirmation"><input type="checkbox" name="confirm_reviewed" value="yes" aria-describedby="ppmpCreationFeedback" {% if creation_validation and creation_validation.field=='confirmation' %}aria-invalid="true"{% endif %}> I confirm the selected saved values for official PPMP creation. Procurement approval remains separate.</label>
-<div class="filters"><button class="btn small blue" type="button" id="edit_selected_btn">Review selected source items</button><button class="btn small blue" type="button" id="reviewSelectedOCR" disabled>Review selected extracted items</button><button class="btn small" type="submit" name="action" value="refresh" formnovalidate>Refresh</button></div>
-<div class="actions" data-record-navigation><span class="muted">{{ocr_rows|length}} active extracted drafts on this page / {{draft_page.total}} matching drafts · {{data|length}} matching workbook items · Showing {{ 'all active uploads' if request.args.get('ocr_source','all')=='all' else 'one source upload' }}</span><a class="btn small" href="{{draft_url(ocr_source='latest',ocr_page=1) if draft_url is defined else url_for('ppmp_type',ptype=ptype,ocr_source='latest')}}">Latest upload</a><a class="btn small" href="{{draft_url(ocr_source='all',ocr_page=1) if draft_url is defined else url_for('ppmp_type',ptype=ptype,ocr_source='all')}}">All active drafts</a></div>
+<div class="actions ppmp-review-controls"><button class="btn primary" type="button" id="edit_selected_btn">Review selected source items</button><button class="btn ppmp-row-button" type="button" id="reviewSelectedOCR" disabled>Review selected extracted items</button><button class="btn small" type="submit" name="action" value="refresh" formnovalidate>{{icon('refresh')}} Refresh</button></div>
+<div class="actions ppmp-draft-scope" data-record-navigation><span class="muted">{{ocr_rows|length}} active extracted drafts on this page / {{draft_page.total}} matching drafts · {{data|length}} matching workbook items · Showing {{ 'all active uploads' if request.args.get('ocr_source','all')=='all' else 'one source upload' }}</span><a class="btn small" href="{{draft_url(ocr_source='latest',ocr_page=1) if draft_url is defined else url_for('ppmp_type',ptype=ptype,ocr_source='latest')}}">Latest upload</a><a class="btn small" href="{{draft_url(ocr_source='all',ocr_page=1) if draft_url is defined else url_for('ppmp_type',ptype=ptype,ocr_source='all')}}">All active drafts</a></div>
 <p id="ocrSelectionCount" class="selection-summary" aria-live="polite">Selection applies to this page, including selected rows hidden by search. Changing pages clears selection.</p>
 <div class="table-scroll ppmp-table-wrap"><table class="table ppmp-list" id="ppmpTable"><thead><tr><th>Select</th><th>Item Code</th><th>Original Item ID</th><th>Original Filename</th><th>Description</th><th>Quantity</th><th>Unit</th><th>Estimated Unit Cost</th><th>Estimated Budget (₱)</th><th>Status / Remarks</th><th>Action</th></tr></thead><tbody>
 {% for r in ocr_rows %}
@@ -83,7 +90,7 @@
 {% endif %}
 {% if draft_url is defined %}<nav class="actions" aria-label="Extracted draft pages" data-record-navigation>{% if draft_page.page>1 %}<a class="btn" href="{{draft_url(ocr_page=draft_page.page-1)}}">Previous draft page</a>{% endif %}{% if draft_page.has_next %}<a class="btn" href="{{draft_url(ocr_page=draft_page.page+1)}}">Next draft page</a>{% endif %}</nav>{% endif %}
 
-{% from 'ui.html' import editor_fields %}
+</div>
 <dialog id="ppmpEditor" class="ppmp-editor-modal" data-mode="selected" aria-labelledby="editorTitle">
   <div class="modal-head"><div class="modal-icon">{{icon('edit')}}</div><div><h3 id="editorTitle">Edit PPMP item</h3><p class="muted">Update details for the selected item.</p></div><button type="button" class="modal-x" data-editor-close aria-label="Close editor">×</button></div>
   <form id="modalEditForm" method="post" action="{{ url_for('ppmp_edit_table', ptype=ptype) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div id="hiddenEditFields"></div>
@@ -96,7 +103,7 @@
   </form>
 </dialog>
 {% endblock %}
-{% block head_extra %}<style>
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='ppmp-layout-1')}}"><style>
 .ppmp-inline-upload{border:1px solid #80b6a1;background:#f2f8f5;margin-bottom:16px}.ppmp-inline-upload h3{margin-top:0}.ppmp-inline-upload-form{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:center}.ppmp-inline-upload-form input[type=file]{width:100%;box-sizing:border-box}.ppmp-inline-upload-form [role=status]{margin-top:8px;overflow-wrap:anywhere}@media(max-width:760px){.ppmp-inline-upload-form{grid-template-columns:1fr}}
 
 .ocr-review-modal.item-review-dialog .modal-footer{position:sticky;bottom:0;z-index:1}

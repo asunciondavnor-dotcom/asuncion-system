@@ -493,3 +493,96 @@ body.reference-shell:has(.aoq-reference-workspace) .sidebar {background:#00482f}
 .pr-review-workspace .review-title-line .id-chip.large { border: 0; }
 .pr-review-items .section-heading-row > .badge { background: #e3f3e7; color: #164f2f; white-space: nowrap; }
 .pr-review-items .source-comparison > .item-review-section { margin: 0; padding: 12px; border: 0; }
+
+/* PPMP overview, category lists and Inventory Item Source */
+.ppmp-workspace { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
+.ppmp-workspace > :is(.card,.toolbar,.breadcrumb,.dataset-pagination) { margin: 0; }
+.ppmp-workspace > .card,
+.ppmp-category-card,
+.ppmp-send-panel { padding: 14px; border: 1px solid #dbe5df; border-radius: 10px; }
+.ppmp-workspace :is(.ppmp-panel-heading,.ppmp-page-heading,.ppmp-workspace-heading) { align-items: center; }
+.ppmp-panel-heading { display: flex; gap: 12px; min-width: 0; }
+.ppmp-panel-heading :is(h2,h3,p), .ppmp-workspace-heading :is(h3,p) { margin: 0; }
+.ppmp-panel-heading p, .ppmp-workspace-heading p { color: var(--muted); margin-top: 3px; }
+.ppmp-page-heading h2 { font-size: clamp(1.5rem,3vw,2rem); }
+.ppmp-page-heading .actions { flex-wrap: wrap; gap: 8px; }
+.ppmp-mark {
+  display: grid; place-items: center; flex: none; width: 38px; height: 38px;
+  border-radius: 8px; color: #15552d; background: #e1f2e5;
+}
+.ppmp-mark .icon { width: 23px; height: 23px; }
+.ppmp-page-heading .ppmp-mark { width: 49px; height: 49px; }
+.ppmp-page-heading .ppmp-mark .icon { width: 28px; height: 28px; }
+.ppmp-overview .procurement-workspace-hero { margin: 0; padding: 0; border: 0; background: transparent; }
+.ppmp-overview .procurement-workspace-title h2 { font-size: clamp(1.5rem,3vw,2rem); }
+.ppmp-overview .procurement-workspace-mark { width: 49px; height: 49px; border-radius: 8px; background: #e1f2e5; color: #15552d; }
+.ppmp-overview .procurement-workspace-title p:empty { display: none; }
+.ppmp-workspace .btn { white-space: normal; text-align: center; }
+.ppmp-workspace .btn .icon { flex: none; }
+.ppmp-search { position: relative; display: block; min-width: 0; }
+.ppmp-search .icon { position: absolute; top: 50%; left: 10px; transform: translateY(-50%); width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
+.ppmp-workspace .ppmp-search input { width: 100%; min-width: 0; padding-left: 34px; }
+.ppmp-overview .record-filter-bar form, .ppmp-filter-grid {
+  display: grid; gap: 10px 16px; align-items: end; margin: 0;
+}
+.ppmp-overview .record-filter-bar form { grid-template-columns: minmax(12rem,2fr) repeat(3,minmax(7rem,1fr)) auto; }
+.ppmp-filter-grid label { display: grid; gap: 4px; min-width: 0; }
+.ppmp-workspace :is(.record-filter-bar,.ppmp-filter-grid) label > :is(input,select) { width: 100%; min-width: 0; }
+.ppmp-overview .record-filter-bar .btn, .ppmp-workspace .ppmp-row-button {
+  background: #f5fbf5; color: #16572f; border: 1px solid #a8ccb0;
+}
+.ppmp-workspace .ppmp-row-button:hover { background: #e3f3e6; }
+.ppmp-category-cards { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.ppmp-category-card { display: grid; gap: 12px; align-content: space-between; margin: 0; }
+.ppmp-category-card h3 { font-size: 1rem; overflow-wrap: anywhere; }
+.ppmp-category-card p { font-size: .83rem; }
+.ppmp-category-card > .btn { justify-self: center; font-size: .85rem; }
+.ppmp-register > .ppmp-panel-heading { margin-bottom: 9px; }
+.ppmp-register .table-scroll { max-height: clamp(200px,31vh,420px); }
+.ppmp-workspace .table-scroll { border-color: #dae4df; }
+.ppmp-workspace :is(.ppmp-created-table,#ppmpTable) > thead th { background: #e4f1e6; color: #14221b; }
+.ppmp-register .ppmp-created-table :is(th,td) { vertical-align: middle; padding: 7px 9px; }
+.ppmp-register .ppmp-created-table .badge { white-space: nowrap; }
+.ppmp-register .ppmp-created-table .badge.info { background: #e1f2e5; color: #15552d; }
+.ppmp-register .dataset-pagination { margin: 8px 0 0; flex-wrap: wrap; }
+.ppmp-category-page .ppmp-filter-panel h3 { margin: 0 0 10px; }
+.ppmp-category-page .ppmp-filter-grid { grid-template-columns: minmax(0,1.17fr) repeat(2,minmax(0,1fr)); }
+.ppmp-category-page .ppmp-filter-grid .btn { justify-self: start; }
+.ppmp-category-page .ppmp-draft-banner { margin-top: 0; background: #edf7ef; }
+.ppmp-category-page .ppmp-draft-banner > .ppmp-panel-heading { display: flex; gap: 12px; }
+.ppmp-category-page .ppmp-draft-banner strong { display: block; }
+.ppmp-category-page #ppmpCreationConfirmation { display: flex; align-items: baseline; gap: 8px; margin: 10px 0; }
+.ppmp-category-page :is(.ppmp-review-controls,.ppmp-draft-scope) { gap: 8px; flex-wrap: wrap; }
+.ppmp-category-page .ppmp-draft-scope { margin: 10px 0 3px; }
+.ppmp-category-page #ppmpTable :is(td:nth-child(3),td:nth-child(4)) { width: auto; }
+.ppmp-category-page #ppmpTable td:nth-child(5) { min-width: 180px; }
+.ppmp-category-page .selection-summary { margin: 5px 0; }
+.ppmp-inventory-page .ppmp-workbook-actions, .ppmp-inventory-page .dataset-upload {
+  display: flex; align-items: end; flex-wrap: wrap; gap: 10px;
+}
+.ppmp-inventory-page .ppmp-workbook-actions { margin-top: 10px; }
+.ppmp-inventory-page .ppmp-workbook-actions > .badge { align-self: end; padding: 9px 10px; }
+.ppmp-inventory-page .dataset-upload { min-width: 0; }
+.ppmp-inventory-page .dataset-upload label { display: grid; gap: 4px; max-width: none; }
+.ppmp-inventory-page .dataset-upload input { max-width: 100%; }
+.ppmp-inventory-page .ppmp-filter-grid { grid-template-columns: minmax(7rem,1fr) minmax(12rem,1.8fr) minmax(6rem,.9fr) minmax(8rem,1.2fr) auto; margin-top: 8px; }
+.ppmp-inventory-page .dataset-create-bar { align-items: end; margin: 8px 0 0; padding: 0; border: 0; background: transparent; }
+.ppmp-inventory-page .dataset-create-bar > label { display: grid; gap: 4px; }
+.ppmp-inventory-page .dataset-destination-panel { padding-left: 14px; border-left: 1px solid #dbe5df; }
+.ppmp-inventory-page .dataset-create-bar .destination-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
+.ppmp-inventory-page .ppmp-send-panel { margin: 0 0 10px; }
+.ppmp-inventory-page .selection-summary { margin: 5px 0; }
+.ppmp-inventory-page .source-table > thead th { background: #e9eef3; color: #14221b; }
+.ppmp-inventory-page .ppmp-empty-icon { display: block; margin: 0 auto 5px; }
+.ppmp-inventory-page .ppmp-empty-icon .icon { width: 24px; height: 24px; }
+@media (max-width: 1130px) {
+  .ppmp-category-cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ppmp-overview .record-filter-bar form, .ppmp-inventory-page .ppmp-filter-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 620px) {
+  .ppmp-workspace { gap: 11px; }
+  .ppmp-category-cards { grid-template-columns: minmax(0,1fr); }
+  .ppmp-category-page .ppmp-filter-grid { grid-template-columns: minmax(0,1fr); }
+  .ppmp-overview .record-filter-bar label:first-of-type, .ppmp-inventory-page .ppmp-filter-grid label:nth-of-type(2) { grid-column: 1/-1; }
+  .ppmp-inventory-page .dataset-destination-panel { padding-left: 0; border: 0; }
+}
