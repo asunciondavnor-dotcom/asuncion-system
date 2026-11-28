@@ -81,16 +81,6 @@
   if (draft && params.has('draft_id') && !['q', 'status', 'page'].some(key => params.has(key))) {
     draft.scrollIntoView({block: 'start'});
   }
-  const filters = document.querySelector('.aoq-filter-panel');
-  const closeFilters = () => {
-    if (!filters?.open) return;
-    filters.open = false;
-    filters.querySelector('summary')?.focus();
-  };
-  document.querySelector('[data-close-aoq-filters]')?.addEventListener('click', closeFilters);
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && filters?.open && !document.querySelector('dialog[open]')) { closeFilters(); event.preventDefault(); }
-  });
   const allowRecordNavigation = () => !document.querySelector('form[data-sync-dirty="true"]') ||
     window.confirm('You have unsaved document edits. Leave this page and discard those edits?');
   document.addEventListener('submit', event => {
@@ -112,14 +102,10 @@
     };
     form.addEventListener('submit', cancel);
     form.addEventListener('change', event => {
-      const control = event.target;
-      // Date/number/status filters commit immediately on change. Search fields
-      // keep the short typing debounce, including existing q/h_q text inputs.
-      if (control.tagName === 'SELECT' || (control.tagName === 'INPUT' &&
-          control.type !== 'hidden' && control.type !== 'search' && !/(?:^|_)q$/.test(control.name || ''))) apply();
+      if (event.target.matches('select,input[type="date"],input[type="number"]')) apply();
     });
     form.addEventListener('input', event => {
-      if (!event.target.matches('input:not([type="hidden"])')) return;
+      if (!event.target.matches('input[type="search"],input[type="text"],input:not([type])')) return;
       cancel();
       const expected = generation;
       timer = setTimeout(() => { if (generation === expected) apply(); }, 400);

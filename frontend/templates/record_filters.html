@@ -1,19 +1,31 @@
 {% from 'procurement_ui.html' import aoq_icon %}
 {% from 'ui.html' import icon %}
 {% if record_pagination and active not in ['inventory','users'] %}
-<section class="card record-filter-bar" aria-label="Record search and filters">
-{% if app_workspace %}<h3 class="app-filter-heading">{{aoq_icon('filters')}} Find records</h3>{% endif %}
-<form method="get" data-auto-filters data-record-navigation><input type="hidden" name="_nav" value="{{navigation_token()}}">
-<label>{{'Keyword' if app_workspace else 'Find records'}}{% if ppmp_workspace or app_workspace or po_workspace or verification_workspace %}<span class="ppmp-search">{{aoq_icon('search')}}{% endif %}<input name="q" type="search" value="{{request.args.get('q','')}}" maxlength="160" placeholder="{{'Document, item or linked reference' if ppmp_workspace or app_workspace else 'Document, item, supplier' if po_workspace or verification_workspace else 'Document, item, supplier or linked reference'}}">{% if ppmp_workspace or app_workspace or po_workspace or verification_workspace %}</span>{% endif %}</label>
-{% if pr_workspace or ppmp_workspace or app_workspace or po_workspace or verification_workspace %}
-{% set selected_status=request.args.get('status','') %}
-<label>Status<select name="status" aria-label="Status"><option value="">All statuses</option>{% set statuses = ['For Review','Approved'] if po_workspace else ['For Review','Reviewed','Approved'] %}{% for status in statuses %}<option {{'selected' if selected_status==status}}>{{status}}</option>{% endfor %}{% if selected_status and selected_status not in statuses %}<option selected>{{selected_status}}</option>{% endif %}</select></label>
-{% elif active!='audit' %}<label>Status<input name="status" value="{{request.args.get('status','')}}" maxlength="60" placeholder="All statuses"></label>{% endif %}
-{% if po_workspace or verification_workspace %}
+{% set selected_status = request.args.get('status','')|trim %}
 {% set year = request.args.get('year','')|trim %}
-<label>Record year<select name="year" aria-label="Record year"><option value="">All years</option>{% for available_year in record_years %}<option value="{{available_year}}" {{'selected' if year==available_year}}>{{available_year}}</option>{% endfor %}{% if year and year not in record_years %}<option value="{{year}}" selected>{{year}}</option>{% endif %}</select></label>
-{% else %}<label>Record year<input name="year" type="number" min="1900" max="2199" step="1" value="{{request.args.get('year','')}}" placeholder="All years" aria-label="Filter records by fiscal or document year"></label>{% endif %}
-<label>{{'Sort by' if pr_workspace or ppmp_workspace or app_workspace else 'Sort'}}<select name="sort">{% for value,label in [('newest','Newest'),('oldest','Oldest'),('number','Reference A–Z'),('number_desc','Reference Z–A'),('status','Status')] if value!='status' or active!='audit' %}<option value="{{value}}" {{'selected' if request.args.get('sort','newest')==value}}>{{label}}</option>{% endfor %}</select></label>
-{% for key,value in request.args.items() if key in ['category','sheet','comparison_po_id','ocr_source','pr_id','po_id','draft_id'] or key.startswith('h_') %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
-<button class="btn" type="submit" data-auto-filter-submit>Apply</button><a class="btn" href="{{pagination_url(1,q='',status='',year='',sort='newest')}}">{{icon('refresh')}} Clear filters</a>
-</form></section>{% endif %}
+{% set years = record_year_choices(active, report|default(none)) if record_year_choices is defined else record_years|default([]) %}
+{% set statuses = ['For Review','Approved'] if active in ['aoq','po'] else ['For Review','Reviewed','Approved'] %}
+<section class="card record-filter-bar" aria-label="Record search and filters">
+  <form method="get" class="record-filter-controls record-filter-standard{{' record-filter-report' if active=='reports'}}" data-auto-filters data-record-navigation{% if record_filter_action %} action="{{record_filter_action}}"{% endif %}>
+    <input type="hidden" name="_nav" value="{{navigation_token()}}">
+    {% if record_filter_context %}{% for key,value in record_filter_context.items() %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}{% endif %}
+    {% for key,value in request.args.items() if (key in ['category','sheet','comparison_po_id','ocr_source','pr_id','po_id','draft_id','quote_q','quote_supplier','quote_sort','quote_page'] or key.startswith('h_') or (active=='iar' and key=='verification_id')) and key not in (record_filter_context|default({})) %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
+    <label class="record-filter-search">Find records<span class="record-filter-search-field">{{aoq_icon('search')}}<input name="q" type="search" value="{{request.args.get('q','')}}" maxlength="160" placeholder="Document, item or supplier"></span></label>
+    {% if active!='audit' %}
+    <label>Status<select name="status" aria-label="Status"><option value="">All statuses</option>{% for status in statuses %}<option value="{{status}}" {{'selected' if selected_status==status}}>{{status}}</option>{% endfor %}{% if selected_status and selected_status not in statuses %}<option selected>{{selected_status}}</option>{% endif %}</select></label>
+    {% endif %}
+    <label>Record year<select name="year" aria-label="Record year"><option value="">All years</option>{% for available_year in years %}<option value="{{available_year}}" {{'selected' if year==available_year}}>{{available_year}}</option>{% endfor %}{% if year and year not in years %}<option value="{{year}}" selected>{{year}}</option>{% endif %}</select></label>
+    <label>Sort by<select name="sort">{% for value,label in [('newest','Newest'),('oldest','Oldest'),('number','Reference A–Z'),('number_desc','Reference Z–A'),('status','Status')] if value!='status' or active!='audit' %}<option value="{{value}}" {{'selected' if request.args.get('sort','newest')==value}}>{{label}}</option>{% endfor %}</select></label>
+    {% if active=='reports' %}
+    <label>Document<select name="records">{% for key in ('ppmp','pr','po') %}<option value="{{key}}" {{'selected' if report==key}}>{{key|upper}}</option>{% endfor %}</select></label>
+    <label>Requesting office or unit<input name="office" type="text" maxlength="160" placeholder="Exact office name" value="{{office}}"></label>
+    {% endif %}
+    {% set reset_options = record_filter_context|default({}) %}
+    {% if active=='reports' %}{% set reset_options = {'records':report,'office':''} %}{% endif %}
+    <div class="record-filter-actions">
+      <button class="btn" type="submit" data-auto-filter-submit>Apply filters</button>
+      <a class="btn record-filter-clear" href="{{pagination_url(1,q='',status='',year='',sort='newest',**reset_options)}}{{record_filter_anchor|default('')}}">{{icon('refresh')}} Clear filters</a>
+    </div>
+  </form>
+</section>
+{% endif %}

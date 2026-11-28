@@ -320,3 +320,72 @@ body.recovery-page {
   .recovery-panel { grid-template-columns: minmax(0, 1fr); padding: 10px; }
   .recovery-art { display: none; }
 }
+
+
+/* Shared filter controls */
+#mainContent .record-filter-bar { padding: 13px 15px; border: 1px solid #dce6e1; border-radius: 8px; background: #fff; }
+#mainContent form.record-filter-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 9px 13px; margin: 0; }
+#mainContent form.record-filter-standard {
+  display: grid; grid-template-columns: minmax(0,1.65fr) repeat(3,minmax(0,1fr)) auto;
+}
+#mainContent form.record-filter-standard:not(:has(select[name="status"])) {
+  grid-template-columns: minmax(0,1.65fr) repeat(2,minmax(0,1fr)) auto;
+}
+#mainContent form.record-filter-report { display: flex; }
+#mainContent form.record-filter-controls label { display: grid; gap: 4px; flex: 1 1 130px; min-width: 0; margin: 0; }
+#mainContent form.record-filter-controls label:has(input[type="search"]) { flex: 1.65 1 200px; }
+#mainContent .record-filter-controls :is(input:not([type="hidden"]),select) { width: 100%; min-width: 0; min-height: 40px; }
+.record-filter-search-field { display: block; position: relative; min-width: 0; }
+.record-filter-search-field > .icon {
+  position: absolute; top: 50%; left: 11px; width: 16px; height: 16px;
+  transform: translateY(-50%); pointer-events: none; color: var(--muted);
+}
+#mainContent .record-filter-search-field > input { padding-inline-start: 35px; }
+#mainContent .record-filter-controls .record-filter-clear {
+  min-height: 40px; color: #16572f; border-color: #a8ccb0; background: #f5fbf5; white-space: nowrap;
+}
+#mainContent .record-filter-controls .record-filter-clear:hover { background: #e3f3e6; }
+#mainContent .record-filter-controls > :is(.actions,.record-filter-actions) { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
+#mainContent .record-filter-controls [hidden] { display: none; }
+.aoq-records > .record-filter-bar { box-shadow: none; }
+@media(max-width:1050px) {
+  #mainContent form.record-filter-standard,
+  #mainContent form.record-filter-standard:not(:has(select[name="status"])) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:620px) {
+  #mainContent .record-filter-standard .record-filter-search { grid-column: 1/-1; }
+}
+
+/* Inspection and acceptance */
+.iar-workspace { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
+.iar-workspace > .card { margin: 0; }
+.iar-workspace > .iar-main { padding: 0; border: 1px solid #dce6e1; border-radius: 9px; overflow: hidden; }
+.iar-heading { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d4e4db; background: #e8f4ed; padding: 12px 16px; }
+.iar-heading h2 { margin: 0; font-size: clamp(1.2rem,2.25vw,1.55rem); }
+.iar-heading-mark {
+  display: grid; place-items: center; width: 38px; height: 38px; flex: none;
+  border-radius: 8px; color: #15552d; background: #d9eddf;
+}
+.iar-heading-mark .icon { width: 23px; height: 23px; }
+.iar-content { padding: 14px 16px; min-width: 0; }
+.iar-content > h3 { margin: 0 0 4px; }
+.iar-content > p { margin: 0 0 10px; }
+.iar-content > .table-scroll { border-color: #dce5e9; border-radius: 7px; }
+.iar-content .table thead th { background: #e9eef3; color: #182536; }
+.iar-content .table :is(th,td) { padding: 7px 9px; vertical-align: middle; }
+.iar-register .table { min-width: 830px; }
+.iar-source-form {
+  display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.35fr) auto;
+  align-items: end; gap: 9px 12px; padding-top: 9px; margin: 12px 0 10px; border-top: 1px solid #dce5e9;
+}
+.iar-source-form label { display: grid; gap: 4px; min-width: 0; }
+.iar-source-form .source-preview { max-width: 100%; min-width: 0; padding: 9px 10px; }
+.iar-row-actions { display: flex; gap: 6px; width: max-content; }
+.iar-row-actions .btn { color: #16572f; border-color: #a8ccb0; background: #f5fbf5; }
+.iar-row-actions .btn:hover { background: #e3f3e6; }
+.iar-content .dataset-pagination { flex-wrap: wrap; margin: 8px 0 0; }
+@media(max-width:720px) {
+  .iar-source-form { grid-template-columns: minmax(0,1fr); align-items: start; }
+  .iar-source-form .btn { justify-self: start; }
+  .iar-heading,.iar-content { padding: 11px; }
+}

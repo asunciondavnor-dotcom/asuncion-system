@@ -116,6 +116,7 @@ def inject_layout_context():
         'sync_topics': live_updates.topics_for_page,
         'record_pagination': getattr(g,'psms_pagination',None),
         'pagination_url': pagination_url,
+        'record_year_choices': record_year_choices,
     }
 
 import signatory_management_v0_1_0 as managed_signatories
@@ -165,6 +166,19 @@ def record_year_expression():
         substring(coalesce(to_jsonb(records)->>'created_at',to_jsonb(records)->>'dt') from '((19|20|21)[0-9]{2})'))"""
 
 
+def record_year_choices(active, report=None):
+    table = {
+        'ppmp': 'ppmp', 'app': 'app_plan', 'pr': 'pr', 'aoq': 'aoq', 'po': 'po',
+        'nlp': 'nlp', 'iar': 'iar', 'ris': 'ris_ics', 'audit': 'audit_trail',
+    }.get(active)
+    if active == 'reports' and report in ('ppmp','pr','po'):
+        table = report
+    if table is None:
+        return []
+    years = q(f"select distinct {record_year_expression()} as record_year from {table} records order by record_year desc")
+    return [row['record_year'] for row in years if row['record_year']]
+
+
 def record_year_sql():
     return record_year_expression() + "=?"
 
@@ -206,6 +220,10 @@ def pagination_url(page,**updates):
         'draft_id','pr_id','po_id','quote_q','quote_supplier','quote_sort','quote_page',
         't_q','t_type','t_sort','t_page','role') if key in request.args}
     filters.update({key:request.args[key] for key in request.args if key.startswith('h_')})
+    if request.endpoint == 'iar' and 'verification_id' in request.args:
+        filters['verification_id'] = request.args['verification_id']
+    if request.endpoint in ('aoq','reports'):
+        filters.update({key:request.args[key] for key in ('tab','view','records','office') if key in request.args})
     filters.update(updates)
     return url_for(request.endpoint,**dict(request.view_args or {}),page=page,**filters)
 
@@ -3604,9 +3622,7 @@ def po():
         aoq_id=revised_procurement.identifier(request.args['aoq_id'])
         selected_aoq=next((a for a in aoqs if a['id']==aoq_id),None)
         if selected_aoq:review_items=parse_items(selected_aoq.get('winning_offer'))
-    year_rows = q(f"select distinct {record_year_expression()} as record_year from po records order by record_year desc")
-    record_years = [entry['record_year'] for entry in year_rows if entry['record_year']]
-    return render_template('po.html',active='po',rows=rows,aoqs=aoqs,title='Purchase Orders',record_years=record_years,
+    return render_template('po.html',active='po',rows=rows,aoqs=aoqs,title='Purchase Orders',
         revised_workflow_active=revised_procurement.enabled(globals()),selected_po=selected_po,
         selected_aoq=selected_aoq,review_items=review_items,can_approve=can_approve,original_references=original_references)
 
@@ -4087,10 +4103,10 @@ def inventory():
                    ' order by '+movement_orders[transaction_filters['t_sort']]+' limit ? offset ?',
                    (*movement_params,movement_size,(movement_page-1)*movement_size))
     movement_types=[row['transaction_type'] for row in q("select distinct transaction_type from inventory_transactions where transaction_type is not null and btrim(transaction_type)<>'' order by transaction_type")]
-    def movement_url(**changes):
+    def movement_url(anchor='inventory-transactions', **changes):
         values={key:value for key,value in request.args.items() if key in ('q','category','planning','stock','sort','page','t_q','t_type','t_sort','t_page')}
         values.update(changes)
-        return url_for('inventory',**values)+'#inventory-transactions'
+        return url_for('inventory',**values)+'#'+anchor
     return render_template(
         'inventory.html', active='inventory', rows=rows, transactions=transactions,
         title='Inventory', categories=categories, search_text=search_text,

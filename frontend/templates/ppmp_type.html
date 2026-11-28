@@ -9,13 +9,13 @@
 {% set draft_page=draft_page|default({'page':1,'total':ocr_rows|length,'has_next':false}) %}
 <section class="card ppmp-filter-panel" aria-labelledby="ppmp-source-filters">
 <h3 id="ppmp-source-filters">Find source items</h3>
-<form method="get" class="ppmp-filter-grid" data-auto-filters data-record-navigation>
+<form method="get" class="ppmp-filter-grid record-filter-controls" data-auto-filters data-record-navigation>
 <input type="hidden" name="_nav" value="{{navigation_token()}}"><input type="hidden" name="ocr_source" value="{{request.args.get('ocr_source','all')}}">
-<label>Item, original ID or filename<span class="ppmp-search">{{aoq_icon('search')}}<input type="search" name="item_q" aria-label="Search PPMP items" value="{{item_filters.item_q}}" maxlength="160" placeholder="Search item, original ID or filename"></span></label>
+<label>Item, original ID or filename<span class="record-filter-search-field">{{aoq_icon('search')}}<input type="search" name="item_q" aria-label="Search PPMP items" value="{{item_filters.item_q}}" maxlength="160" placeholder="Search item, original ID or filename"></span></label>
 <label>Source<select name="item_source">{% for value,label in [('','All available sources'),('extracted','Extracted document drafts'),('workbook','Workbook source items')] %}<option value="{{value}}" {{'selected' if item_filters.item_source==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Review status<select name="item_review">{% for value,label in [('','All active items'),('NEEDS_REVIEW','Review not recorded'),('REVIEWED','Human review recorded')] %}<option value="{{value}}" {{'selected' if item_filters.item_review==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Sort within source groups<select name="item_sort">{% for value,label in [('source','Recorded source order'),('name','Item name A–Z'),('name_desc','Item name Z–A')] %}<option value="{{value}}" {{'selected' if item_filters.item_sort==value}}>{{label}}</option>{% endfor %}</select></label>
-<button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('ppmp_type',ptype=ptype,ocr_source=request.args.get('ocr_source','all'))}}" data-record-navigation>{{icon('refresh')}} Reset filters</a>
+<button type="submit" class="btn" data-auto-filter-submit>Apply filters</button><a class="btn record-filter-clear" href="{{url_for('ppmp_type',ptype=ptype,ocr_source=request.args.get('ocr_source','all'))}}" data-record-navigation>{{icon('refresh')}} Clear filters</a>
 </form>
 </section>
 <form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

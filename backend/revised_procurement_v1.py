@@ -760,10 +760,7 @@ def nlp_page(api):
     elif request.args.get('pr_id') or request.args.get('po_id'):
         pr,po=source_pair(api,request.args.get('pr_id'),request.args.get('po_id'))
         technical=comparison(api,pr,po)
-    year_expression = api['record_year_expression']()
-    year_rows = api['q'](f"select distinct {year_expression} as record_year from nlp records order by record_year desc")
-    record_years = [row['record_year'] for row in year_rows if row['record_year']]
-    return render_template('revised_nlp.html',active='nlp',title='PR-PO Verification',prs=prs,pos=pos,rows=rows, record_years=record_years,
+    return render_template('revised_nlp.html',active='nlp',title='PR-PO Verification',prs=prs,pos=pos,rows=rows,
         selected_pr=pr,selected_po=po,comparison=technical,
         pr_items=api['parse_items'](pr['items']) if pr else [],po_items=api['parse_items'](po['items']) if po else [],
         model_state=api['trained_nlp_model_status'](),verification=selected,

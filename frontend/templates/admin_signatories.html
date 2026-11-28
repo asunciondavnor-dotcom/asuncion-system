@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'procurement_ui.html' import aoq_icon %}
 {% from 'ui.html' import icon %}
 {% macro guard(person=None) -%}
 <input type="hidden" name="config_revision" value="{{ config_revision }}">
@@ -17,11 +18,11 @@
 <div class="form-field"><label>Effective until (optional)</label><input type="date" name="effective_to"></div>
 <div class="form-actions full"><button class="btn primary" type="submit">Add signatory</button></div></form></section>
 <section class="card signatory-configured"><h3 class="approved-card-heading">{{icon("users")}} Configured Signatories</h3>
-<form method="get" class="filters" data-auto-filters data-record-navigation aria-label="Configured signatory filters"><input type="hidden" name="_nav" value="{{navigation_token()}}">
-<label>Find signatories<input type="search" name="q" value="{{signatory_filters.q}}" maxlength="160" placeholder="Name, designation or department"></label>
+<form method="get" class="filters record-filter-controls" data-auto-filters data-record-navigation aria-label="Configured signatory filters"><input type="hidden" name="_nav" value="{{navigation_token()}}">
+<label>Find signatories<span class="record-filter-search-field">{{aoq_icon('search')}}<input type="search" name="q" value="{{signatory_filters.q}}" maxlength="160" placeholder="Name, designation or department"></span></label>
 <label>Status<select name="status"><option value="">All statuses</option>{% for value in ['Active','Inactive'] %}<option {{'selected' if signatory_filters.status==value}}>{{value}}</option>{% endfor %}</select></label>
 <label>Sort<select name="sort">{% for value,label in [('source','Recorded order'),('name','Name A–Z'),('newest','Newest first'),('effective','Effective date, latest first')] %}<option value="{{value}}" {{'selected' if signatory_filters.sort==value}}>{{label}}</option>{% endfor %}</select></label>
-<button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('signatories.index')}}" data-record-navigation>{{icon('refresh')}} Reset</a>
+<button type="submit" class="btn" data-auto-filter-submit>Apply filters</button><a class="btn record-filter-clear" href="{{url_for('signatories.index')}}" data-record-navigation>{{icon('refresh')}} Clear filters</a>
 </form><p class="muted">{{people|length}} of {{signatory_total}} matching signatories. Assignments and retained identities are not changed by these filters.</p>
 {% for p in people %}
 <details class="signatory-person" {{"open" if loop.first}}><summary><strong>{{ p.full_name }}</strong> — {{ p.position }} · {{ 'Active' if p.active else 'Inactive' }}</summary>
