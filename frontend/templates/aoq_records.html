@@ -1,3 +1,4 @@
+{% from 'ui.html' import icon %}
 {% from 'procurement_ui.html' import aoq_icon %}
 {% set current_status=request.args.get('status','').strip() %}
 {% set search_term=request.args.get('q','').strip() %}
@@ -12,12 +13,12 @@
       {% if ocr_data %}<input type="hidden" name="draft_id" value="{{ocr_data.draft_id}}">{% elif request.args.get('draft_id') %}<input type="hidden" name="draft_id" value="{{request.args.draft_id}}">{% endif %}
       {% for key,value in request.args.items() if key.startswith('h_') or key in ['quote_q','quote_supplier','quote_sort','quote_page'] %}<input type="hidden" name="{{key}}" value="{{value}}">{% endfor %}
       <div class="aoq-search"><label for="aoq-record-search">Search AOQ records</label><div class="aoq-search-field"><span aria-hidden="true">{{aoq_icon('search')}}</span><input id="aoq-record-search" name="q" type="search" maxlength="160" value="{{search_term}}" placeholder="AOQ number, supplier, item or description"></div></div>
-      <div class="aoq-search-actions"><button class="btn primary" type="submit" data-auto-filter-submit>Search</button>{% if search_term %}<a class="btn" href="{{pagination_url(1,q='',**record_context)}}#aoq-records" data-record-navigation>Clear search</a>{% endif %}</div>
+      <div class="aoq-search-actions"><button class="btn primary" type="submit" data-auto-filter-submit>Search</button>{% if search_term %}<a class="btn" href="{{pagination_url(1,q='',**record_context)}}#aoq-records" data-record-navigation>{{icon('refresh')}} Clear search</a>{% endif %}</div>
       <details class="aoq-filter-panel"><summary class="btn" aria-controls="aoq-record-filter-fields">{{aoq_icon('filters')}}Filters</summary><div id="aoq-record-filter-fields">
         <label>Status<select name="status"><option value="">All records</option>{% for state in ['For Review','Approved'] %}<option value="{{state}}" {{'selected' if current_status==state}}>{{state}}</option>{% endfor %}{% if current_status and current_status not in ['For Review','Approved'] %}<option value="{{current_status}}" selected>{{current_status}}</option>{% endif %}</select></label>
         <label>Record year<input name="year" type="number" min="1900" max="2199" step="1" value="{{request.args.get('year','')}}" placeholder="All years"></label>
         <label>Sort<select name="sort">{% for key,label in [('newest','Newest first'),('oldest','Oldest first'),('number','AOQ number A–Z'),('number_desc','AOQ number Z–A'),('status','Status')] %}<option value="{{key}}" {{'selected' if request.args.get('sort','newest')==key}}>{{label}}</option>{% endfor %}</select></label>
-        <div class="actions"><button class="btn" type="button" data-close-aoq-filters>Close</button><a class="btn" href="{{pagination_url(1,status='',year='',sort='newest',**record_context)}}#aoq-records" data-record-navigation>Reset filters</a></div>
+        <div class="actions"><button class="btn" type="button" data-close-aoq-filters>Close</button><a class="btn" href="{{pagination_url(1,status='',year='',sort='newest',**record_context)}}#aoq-records" data-record-navigation>{{icon('refresh')}} Reset filters</a></div>
       </div></details>
     </form>
   <nav class="aoq-record-tabs" aria-label="AOQ status filters" data-record-navigation>

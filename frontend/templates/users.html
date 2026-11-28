@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'ui.html' import icon %}
 {% from 'recovery_email_controls.html' import email_controls,otp_admin_email_controls with context %}
 {% block content %}
 <script type="application/json" id="employee-password-policy">{{ password_client_policy()|tojson }}</script>
@@ -13,7 +14,7 @@
 <label>Role<select name="role"><option value="">All roles</option>{% for value in ['Admin','Staff','Inspector'] %}<option {{'selected' if user_filters.role==value}}>{{value}}</option>{% endfor %}</select></label>
 <label>Account status<select name="status"><option value="">All statuses</option>{% for value,label in [('Active','Active'),('Inactive','Deactivated')] %}<option value="{{value}}" {{'selected' if user_filters.status==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Sort<select name="sort">{% for value,label in [('username','Username A–Z'),('name','Full name A–Z'),('role','Role / username'),('status','Status / username'),('newest','Newest accounts')] %}<option value="{{value}}" {{'selected' if user_filters.sort==value}}>{{label}}</option>{% endfor %}</select></label>
-<button class="btn" type="submit" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('users')}}" data-record-navigation>Reset</a>
+<button class="btn" type="submit" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('users')}}" data-record-navigation>{{icon('refresh')}} Reset</a>
 </form><p class="muted">{{rows|length}} of {{user_count}} matching accounts.</p>
 <div class="table-scroll"><table class="table">
   <thead><tr>

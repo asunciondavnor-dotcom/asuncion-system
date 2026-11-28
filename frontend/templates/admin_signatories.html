@@ -21,7 +21,7 @@
 <label>Find signatories<input type="search" name="q" value="{{signatory_filters.q}}" maxlength="160" placeholder="Name, designation or department"></label>
 <label>Status<select name="status"><option value="">All statuses</option>{% for value in ['Active','Inactive'] %}<option {{'selected' if signatory_filters.status==value}}>{{value}}</option>{% endfor %}</select></label>
 <label>Sort<select name="sort">{% for value,label in [('source','Recorded order'),('name','Name A–Z'),('newest','Newest first'),('effective','Effective date, latest first')] %}<option value="{{value}}" {{'selected' if signatory_filters.sort==value}}>{{label}}</option>{% endfor %}</select></label>
-<button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('signatories.index')}}" data-record-navigation>Reset</a>
+<button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('signatories.index')}}" data-record-navigation>{{icon('refresh')}} Reset</a>
 </form><p class="muted">{{people|length}} of {{signatory_total}} matching signatories. Assignments and retained identities are not changed by these filters.</p>
 {% for p in people %}
 <details class="signatory-person" {{"open" if loop.first}}><summary><strong>{{ p.full_name }}</strong> — {{ p.position }} · {{ 'Active' if p.active else 'Inactive' }}</summary>

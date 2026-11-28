@@ -15,14 +15,14 @@
 <label>Source<select name="item_source">{% for value,label in [('','All available sources'),('extracted','Extracted document drafts'),('workbook','Workbook source items')] %}<option value="{{value}}" {{'selected' if item_filters.item_source==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Review status<select name="item_review">{% for value,label in [('','All active items'),('NEEDS_REVIEW','Review not recorded'),('REVIEWED','Human review recorded')] %}<option value="{{value}}" {{'selected' if item_filters.item_review==value}}>{{label}}</option>{% endfor %}</select></label>
 <label>Sort within source groups<select name="item_sort">{% for value,label in [('source','Recorded source order'),('name','Item name A–Z'),('name_desc','Item name Z–A')] %}<option value="{{value}}" {{'selected' if item_filters.item_sort==value}}>{{label}}</option>{% endfor %}</select></label>
-<button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('ppmp_type',ptype=ptype,ocr_source=request.args.get('ocr_source','all'))}}" data-record-navigation>Reset filters</a>
+<button type="submit" class="btn" data-auto-filter-submit>Search</button><a class="btn" href="{{url_for('ppmp_type',ptype=ptype,ocr_source=request.args.get('ocr_source','all'))}}" data-record-navigation>{{icon('refresh')}} Reset filters</a>
 </form>
 </section>
 <form method="post" enctype="multipart/form-data" id="ppmpSourceForm"><input type="hidden" name="creation_token" value="{{creation_token}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <p id="ppmpCreationFeedback" class="notice" data-category="error" role="alert" tabindex="-1" {% if not creation_validation %}hidden{% endif %}>{{creation_validation.message if creation_validation else ''}}</p>
 {% set active_source = namespace(count=0) %}{% for item in ocr_rows if ocr_state and item.source_id|string==ocr_state.source_id|string %}{% set active_source.count=active_source.count+1 %}{% endfor %}
 {% if active_source.count %}
-<div class="ocr-result-banner ppmp-draft-banner"><div class="ppmp-panel-heading"><span class="ppmp-mark">{{icon()}}</span><div><strong>{{active_source.count}} active extracted draft{{'' if active_source.count==1 else 's'}} from this upload on this page</strong><span>{{ocr_state.filename or 'Uploaded document'}}</span></div></div><div class="actions"><button class="btn small" name="action" value="clear_ocr" type="submit" formnovalidate>Clear extraction</button></div></div>
+<div class="ocr-result-banner ppmp-draft-banner"><div class="ppmp-panel-heading"><span class="ppmp-mark">{{icon()}}</span><div><strong>{{active_source.count}} active extracted draft{{'' if active_source.count==1 else 's'}} from this upload on this page</strong><span>{{ocr_state.filename or 'Uploaded document'}}</span></div></div><div class="actions"><button class="btn small" name="action" value="clear_ocr" type="submit" formnovalidate>{{icon('refresh')}} Clear extraction</button></div></div>
 {% else %}
 <p class="notice" role="status" id="ocrEmptyState">No active extracted drafts from the selected upload on this page. Saved originals and review history remain in Document History.{% if ocr_rows %} Other active uploads are listed below.{% endif %}</p>
 {% endif %}
