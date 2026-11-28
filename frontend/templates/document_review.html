@@ -2,21 +2,27 @@
 {% from 'procurement_ui.html' import display_value, aoq_icon %}
 {% from 'ui.html' import icon %}
 {% from 'iar_receiving_ui.html' import receiving_form,receiving_summary with context %}
-{% block head_extra %}{% if active in ['pr','aoq','po','nlp'] %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='pr-review-1' if active=='pr' else none)}}">{% endif %}{% endblock %}
+{% block head_extra %}{% if active in ['app','pr','aoq','po','nlp'] %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='document-review-2' if active in ['app','pr'] else none)}}">{% endif %}{% endblock %}
 {% block content %}
 {% set procurement_display = active in ['ppmp','app','pr','aoq','po','nlp'] %}
 {% set updated_review = active in ['pr','aoq','po','nlp'] %}
 {% set retired_nlp = active=='nlp' %}
 {% set show_original_file = active in ['ppmp', 'app', 'pr'] %}
-{% set pr_review_layout = active=='pr' %}
-{% macro stored_fields(item) %}
-<details class="stored-fields">
+{% set app_review_layout = active=='app' %}
+{% set document_review_layout = active in ['app','pr'] %}
+{% macro stored_fields(item, expanded=false) %}
+<details class="stored-fields"{% if expanded %} open{% endif %}>
   <summary>Item {{item.index}} details</summary>
   <div class="stored-field-grid">
     {% for detail in item.details if not detail.diagnostic and not review_field_is_diagnostic(detail.label) %}
     <div class="stored-field {{'primary-field' if detail.is_primary else ''}}">
       <span>{{detail.label}}</span>
-      <b>{{detail.value|month_year if procurement_display and detail.value is string and detail.label in ['Start of Procurement Activity','End of Procurement Activity','Expected Delivery/Implementation Period'] else display_value(detail.value)}}</b>
+      {% if app_review_layout and detail.label in ['Estimated Budget Allocation (Php)','Estimated Unit Cost','Estimated Total Cost','Unit Cost','Total Cost','Amount'] and (detail.value|float(none)) is not none %}
+      <b>{{detail.value|money}}</b>
+      {% else %}
+      {% set value = detail.value|month_year if procurement_display and detail.value is string and detail.label in ['Start of Procurement Activity','End of Procurement Activity','Expected Delivery/Implementation Period'] else display_value(detail.value) %}
+      <b>{{value|trim if app_review_layout else value}}</b>
+      {% endif %}
     </div>
     {% else %}
     <div class="muted">No additional fields stored for this item.</div>
@@ -24,22 +30,22 @@
   </div>
 </details>
 {% endmacro %}
-{% if pr_review_layout %}<div class="pr-review-workspace"><section class="card pr-review-overview" aria-labelledby="pr-review-title">{% endif %}
+{% if document_review_layout %}<div class="document-review-workspace{{' app-review-workspace' if app_review_layout}}"><section class="card document-review-overview" aria-labelledby="document-review-title">{% endif %}
 <div class="review-toolbar">
-  <div class="{{'pr-review-identity' if pr_review_layout}}">
-    {% if pr_review_layout %}<span class="pr-review-mark">{{icon('document')}}</span><div>{% endif %}
+  <div class="{{'document-review-identity' if document_review_layout}}">
+    {% if document_review_layout %}<span class="document-review-mark">{{icon('document')}}</span><div>{% endif %}
     <div class="review-kicker">{{'RECEIVING REVIEW' if receiving_items else 'DOCUMENT REVIEW' if updated_review else 'READ-ONLY VIEWING MODE'}}</div>
-    <h2{% if pr_review_layout %} id="pr-review-title"{% endif %}>{{document_type}}</h2>
+    <h2{% if document_review_layout %} id="document-review-title"{% endif %}>{{document_type}}</h2>
     <div class="review-title-line">
       <span class="id-chip large">{{ document_no }}</span>
-      <span class="badge {{ 'ok' if status=='Approved' else ('info' if status=='Reviewed' else 'warn') }}">{% if pr_review_layout and status=='Approved' %}{{aoq_icon('check')}}{% endif %}{{status}}</span>
+      <span class="badge {{ 'ok' if status=='Approved' else ('info' if status=='Reviewed' else 'warn') }}">{% if document_review_layout and status=='Approved' %}{{aoq_icon('check')}}{% endif %}{{status}}</span>
       {% if created_at %}<span class="muted">Created {{ created_at }}</span>{% endif %}
     </div>
-    {% if pr_review_layout %}</div>{% endif %}
+    {% if document_review_layout %}</div>{% endif %}
   </div>
   <div class="actions">
-    <a class="btn" href="{{url_for(active) if workflow_preview else back_url}}">{% if pr_review_layout %}{{aoq_icon('previous')}} {% endif %}Back</a>
-    {% if print_url and not workflow_preview %}<a class="btn {{'primary' if pr_review_layout else 'blue'}}" href="{{print_url}}" target="_blank">Print</a>{% endif %}
+    <a class="btn" href="{{url_for(active) if workflow_preview else back_url}}">{% if document_review_layout %}{{aoq_icon('previous')}} {% endif %}Back</a>
+    {% if print_url and not workflow_preview %}<a class="btn {{'primary' if document_review_layout else 'blue'}}" href="{{print_url}}" target="_blank">{% if app_review_layout %}{{aoq_icon('print')}} {% endif %}Print</a>{% endif %}
   </div>
 </div>
 
@@ -55,47 +61,58 @@
 {% if retired_nlp %}<p class="warning-box">Historical comparison record. Its evidence is retained; its old approval action is retired. <a href="{{url_for('nlp')}}">Open PR–PO Review</a>.</p>{% endif %}
 
 {% set linked_records = linked_records|rejectattr('diagnostic')|list %}
+{% set summary = summary|rejectattr('diagnostic')|list %}
+{% if app_review_layout %}
+<dl class="app-review-summary" aria-label="APP summary">
+  {% for field in linked_records + summary if not review_field_is_diagnostic(field.label) %}
+  <div>
+    <dt>{{field.label}}</dt>
+    <dd>{% if field.url %}<a href="{{field.url}}" target="_blank">{{display_value(field.value)}}</a>{% else %}{{display_value(field.value)}}{% endif %}</dd>
+  </div>
+  {% endfor %}
+</dl>
+{% else %}
 {% if linked_records %}
-<div class="{{'pr-review-links' if pr_review_layout else 'card review-card'}}">
-  {% if not pr_review_layout %}<h3>Linked Procurement Records</h3>{% endif %}
+<div class="{{'pr-review-links' if document_review_layout else 'card review-card'}}">
+  {% if not document_review_layout %}<h3>Linked Procurement Records</h3>{% endif %}
   <div class="linked-record-grid">
     {% for field in linked_records if not field.diagnostic and not review_field_is_diagnostic(field.label) %}
     <div class="linked-record">
-      {% if pr_review_layout %}<span class="pr-summary-icon">{{aoq_icon('stack') if loop.index<3 else icon('document')}}</span>{% endif %}
-      {% if pr_review_layout %}<div class="linked-record-value">{% endif %}<span>{{field.label}}</span>
-      {% if field.url %}<a href="{{ field.url }}" target="_blank"><b>{{display_value(field.value)}}</b></a>{% else %}<b>{{display_value(field.value)}}</b>{% endif %}{% if pr_review_layout %}</div>{% endif %}
+      {% if document_review_layout %}<span class="pr-summary-icon">{{aoq_icon('stack') if loop.index<3 else icon('document')}}</span>{% endif %}
+      {% if document_review_layout %}<div class="linked-record-value">{% endif %}<span>{{field.label}}</span>
+      {% if field.url %}<a href="{{ field.url }}" target="_blank"><b>{{display_value(field.value)}}</b></a>{% else %}<b>{{display_value(field.value)}}</b>{% endif %}{% if document_review_layout %}</div>{% endif %}
     </div>
     {% endfor %}
   </div>
 </div>
 {% endif %}
 
-{% set summary = summary|rejectattr('diagnostic')|list %}
 {% if summary %}
 <div class="review-summary-grid">
   {% for field in summary if not field.diagnostic and not review_field_is_diagnostic(field.label) %}
   <div class="card review-summary-card">
-    {% if pr_review_layout %}<span class="pr-summary-icon">{{icon(['users','edit','box','report'][loop.index0])}}</span>{% endif %}
-    {% if pr_review_layout %}<div>{% endif %}<div class="muted">{{field.label}}</div>
-    <div class="review-summary-value">{{display_value(field.value)}}</div>{% if pr_review_layout %}</div>{% endif %}
+    {% if document_review_layout %}<span class="pr-summary-icon">{{icon(['users','edit','box','report'][loop.index0])}}</span>{% endif %}
+    {% if document_review_layout %}<div>{% endif %}<div class="muted">{{field.label}}</div>
+    <div class="review-summary-value">{{display_value(field.value)}}</div>{% if document_review_layout %}</div>{% endif %}
   </div>
   {% endfor %}
 </div>
 {% endif %}
 
-{% if pr_review_layout %}</section><div class="card pr-review-items">{% endif %}
+{% endif %}
+{% if document_review_layout %}</section><div class="card document-review-items">{% endif %}
 {% for section in item_sections %}
 {% set historical_pr = active=='aoq' and section.title=='Approved PR Requirements' %}
 {% if not historical_pr or section['items'] %}
 {% if section.optional or historical_pr %}<details class="card source-comparison"><summary>{{'Historical PR reference' if historical_pr else section.title}} · {{ section.count }} source item{{'' if section.count==1 else 's'}}</summary>{% endif %}
 <div class="card review-card item-review-section">
   <div class="section-heading-row">
-    {% if pr_review_layout %}<span class="pr-review-mark">{{icon('box')}}</span>{% endif %}
+    {% if document_review_layout %}<span class="document-review-mark">{{icon('document' if app_review_layout else 'box')}}</span>{% endif %}
     <div>
       <h3>{{'Historical PR reference' if historical_pr else section.title}}</h3>
       {% if historical_pr %}<p class="muted">Retained association from an existing record. It is not a prerequisite for independent AOQ approval.</p>{% elif section.note %}<p class="muted">{{ section.note }}</p>{% endif %}
     </div>
-    <span class="badge info">{{section.count}} {{('item' if section.count==1 else 'items') if pr_review_layout else 'item(s)'}}</span>
+    <span class="badge info">{{section.count}} {{('item' if section.count==1 else 'items') if document_review_layout else 'item(s)'}}</span>
   </div>
   {% if section['items'] %}
   <div class="review-table-wrap">
@@ -121,21 +138,21 @@
           <td class="source-item">{% if item.source_number %}<span class="id-chip mini secondary">{{item.source_number}}</span>{% endif %}</td>
           {% if show_original_file %}<td>{{item.source_filename}}</td>{% endif %}
           <td><b>{{display_value(shown.item)}}</b></td>
-          <td class="review-description">{{display_value(shown.description)|trim if pr_review_layout else display_value(shown.description)}}</td>
+          <td class="review-description">{{display_value(shown.description)|trim if document_review_layout else display_value(shown.description)}}</td>
           <td class="{{'quantity' if procurement_display}}">{% if shown.quantity is mapping or (shown.quantity is sequence and shown.quantity is not string) or shown.quantity is boolean %}{{display_value(shown.quantity)}}{% else %}{{shown.quantity|quantity if procurement_display else display_value(shown.quantity)}}{% endif %}</td>
           <td class="{{'unit' if procurement_display}}">{{display_value(shown.unit)}}</td>
           <td class="{{'numeric' if procurement_display}}">{{display_value(shown.unit_cost)}}</td>
           <td class="{{'numeric' if procurement_display}}"><b>{{display_value(shown.amount)}}</b></td>
         </tr>
-        {% if not pr_review_layout %}
+        {% if not document_review_layout %}
         <tr class="review-detail-row"><td colspan="{{9 if show_original_file else 8}}">{{stored_fields(item)}}</td></tr>
         {% endif %}
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% if pr_review_layout %}<div class="pr-stored-fields">
-    {% for item in section['items'] %}{{stored_fields(item)}}{% endfor %}
+  {% if document_review_layout %}<div class="document-stored-fields">
+    {% for item in section['items'] %}{{stored_fields(item, app_review_layout and section.count==1 and not section.optional)}}{% endfor %}
   </div>{% endif %}
   {% else %}
   <div class="empty-review-warning">No items are stored in this section. Do not approve until the missing-item issue is resolved.</div>
@@ -145,7 +162,7 @@
 {% endif %}
 {% endfor %}
 
-{% if pr_review_layout %}</div>{% endif %}
+{% if document_review_layout %}</div>{% endif %}
 {% for block in text_blocks if not block.diagnostic %}
 <div class="card review-card"><h3>{{block.title}}</h3><div class="source-value">{{display_value(block.content)}}</div></div>
 {% endfor %}
@@ -159,7 +176,7 @@
 {% endif %}
 
 {% if active=='iar' and status=='Approved' and receiving_items %}{{receiving_summary(receiving_items)}}{% endif %}
-<div class="card approval-review-card {{'procurement-final-approval' if updated_review}}">
+<div class="card approval-review-card {{'procurement-final-approval' if updated_review or app_review_layout}}">
   {% if can_review and not workflow_preview and not retired_nlp %}
   <div class="approval-warning-title">Review Completion</div>
   <p>{{ review_effect }}</p>
@@ -175,7 +192,7 @@
     </div>
   </form>
   {% elif can_approve and not workflow_preview and not retired_nlp %}
-  <div class="approval-warning-title">{{'Final PO Approval' if active=='po' else 'AOQ Approval' if active=='aoq' else 'PR Approval' if active=='pr' else 'Final Approval Check'}}</div>
+  <div class="approval-warning-title">{{'Final PO Approval' if active=='po' else 'AOQ Approval' if active=='aoq' else 'PR Approval' if active=='pr' else 'APP Approval' if app_review_layout else 'Final Approval Check'}}</div>
   <p>{% if active=='pr' %}Approval records this PR as the original approved requirement for later PR–PO Review. AOQ upload remains independent.{% elif active=='po' %}This is the separate final approval. The server rechecks the authorized relationship, original verification evidence and current sources before approving the PO.{% else %}{{ approval_effect }}{% endif %}</p>
   <form method="post" action="{{ approve_url }}" id="reviewApprovalForm"
         {% if active in ['aoq','po'] %}data-final-approval="true" data-approval-details="{{ approval_details|tojson|forceescape }}"{% endif %}
@@ -194,7 +211,7 @@
   </form>
   {% elif status == 'Approved' %}
   <div class="approved-review-state">
-    {% if pr_review_layout %}<span class="pr-approved-icon">{{aoq_icon('check')}}</span>{% endif %}
+    {% if document_review_layout %}<span class="document-approved-icon">{{aoq_icon('check')}}</span>{% endif %}
     <span class="badge ok">Approved</span>
     <div>
       <b>{{ document_no }} is already approved.</b>
@@ -212,7 +229,7 @@
   {% endif %}
 </div>
 {% if active=='aoq' and status=='Approved' %}<a class="btn blue" href="{{url_for('po')}}">Continue to purchase orders</a>{% elif active=='pr' and status=='Approved' %}<div class="actions pr-review-actions"><a class="btn primary" href="{{url_for('aoq')}}">{{icon('upload')}} Independent AOQ upload</a><a class="btn" href="{{url_for('nlp')}}">{{aoq_icon('stack')}} PR–PO Review</a></div>{% endif %}
-{% if pr_review_layout %}</div>{% endif %}
+{% if document_review_layout %}</div>{% endif %}
 
 <script>
 (function () {
