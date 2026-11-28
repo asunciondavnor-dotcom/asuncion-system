@@ -16,25 +16,21 @@
   <main class="login-split">
     <section class="login-hero" aria-labelledby="login-service-heading">
       <img class="login-hall-photo" src="{{ url_for('static', filename='images/asuncion_hall.jpg') }}" alt="Municipality of Asuncion municipal hall">
-      <div class="login-curve" aria-hidden="true"></div>
       <div class="login-hero-brand">
         <img src="{{ url_for('static', filename='images/asuncion-seal.png') }}" alt="Municipality of Asuncion official seal" width="76" height="76">
         <div>
           <strong>Municipality of Asuncion</strong>
-          <span>Supply &amp; Property Management System</span>
         </div>
       </div>
       <div class="login-copy">
-        <div class="login-gold-rule" aria-hidden="true"></div>
-        <h1 id="login-service-heading">Enhance Supply Management System</h1>
-        <p>Prepare, review, and approve procurement documents, manage inventory, and ensure accountability with a clear, secure audit trail.</p>
+        <h1 id="login-service-heading">Supply &amp; Property<br class="login-title-break"> Management System</h1>
       </div>
     </section>
 
     <section class="login-form-side" aria-labelledby="login-heading">
       <div class="login-form-card">
-        <h2 id="login-heading">Welcome back</h2>
-        <p class="login-form-intro">Sign in to your workspace to access the Supply &amp; Property Management System.</p>
+        <h2 id="login-heading">Sign in</h2>
+        <p class="login-form-intro">Enter your municipal account credentials.</p>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% for category, message in messages %}
@@ -59,18 +55,20 @@
               <button class="password-toggle" type="button" data-password="loginPassword" aria-label="Show password" aria-controls="loginPassword" aria-pressed="false">Show</button>
             </div>
           </div>
-          {% if forgot_password_enabled %}<p><a href="{{url_for('account_otp.public')}}">Forgot Password?</a>{% if otp_enabled %} · <a href="{{url_for('account_otp.public',mode='activate')}}">Activate Gmail</a>{% endif %}</p>{% endif %}
           <button class="btn primary login-btn" type="submit">
             <span>Sign in</span>
             <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5M3 12h12m-4-4 4 4-4 4"/></svg>
           </button>
         </form>
-      </div>
 
-      <footer class="login-official-footer">
-        <p>Official digital service of the Municipality of Asuncion.</p>
-        <p>A secure and authorized platform for the management of supply and property resources.</p>
-      </footer>
+        {% if forgot_password_enabled %}
+        <nav class="login-support-links" aria-label="Account help">
+          <a href="{{url_for('account_otp.public')}}">Forgot Password?</a>
+          {% if otp_enabled %}<a href="{{url_for('account_otp.public',mode='activate')}}">Activate Gmail</a>{% endif %}
+        </nav>
+        {% endif %}
+        <footer class="login-official-footer">Municipality of Asuncion</footer>
+      </div>
     </section>
   </main>
 </body>
