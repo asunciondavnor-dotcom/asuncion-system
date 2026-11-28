@@ -358,3 +358,61 @@ body.reference-shell:has(.aoq-reference-workspace) .sidebar {background:#00482f}
  .aoq-reference-workspace .aoq-records .aoq-filter-panel[open] {flex-basis:100%;width:100%}
  .aoq-reference-workspace .aoq-records .aoq-filter-panel>div {width:100%}
 }
+
+/* Purchase Requests register and creation workspace. */
+.pr-workspace { display: grid; gap: 12px; }
+.procurement-page .pr-workspace .procurement-workspace-hero { padding: 0; margin: 0; background: transparent; border: 0; }
+.pr-workspace .procurement-workspace-title { align-items: center; gap: 12px; }
+.procurement-page .pr-workspace .procurement-workspace-mark, .pr-register-mark {
+  width: 46px; height: 46px; display: grid; place-items: center; flex: none;
+  border-radius: 9px; background: #ddf1e2; color: #12613a;
+}
+.procurement-page .pr-workspace .procurement-workspace-title h2 { font-size: clamp(1.25rem, 2.5vw, 1.65rem); }
+.pr-workspace .procurement-workspace-title p { margin: 2px 0 0; }
+.pr-workspace > .card { margin: 0; padding: 12px 16px; border-radius: 9px; }
+.pr-workspace :is(h3, p, fieldset) { margin: 0; }
+.pr-workspace h3 { font-size: 1.05rem; }
+.pr-workspace :is(.record-filter-bar form, .pr-create-grid) { display: grid; gap: 10px 16px; }
+.pr-workspace .record-filter-bar form { grid-template-columns: minmax(14rem, 2.4fr) repeat(3,minmax(7rem,1fr)) auto; align-items: end; margin: 0; }
+.pr-workspace .record-filter-bar label { min-width: 0; }
+.pr-workspace .record-filter-bar .btn { background: #e9f6ea; color: #125635; border-color: #a9d3ad; }
+.pr-workspace .pr-create h3 { margin-bottom: 8px; }
+.pr-workspace .pr-create-grid { grid-template-columns: minmax(0,1fr) minmax(0,1fr); border: 0; padding: 0; min-width: 0; }
+.pr-create-fields { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.pr-create-fields label { display: grid; gap: 4px; font-weight: 650; }
+.pr-workspace :is(input, select, textarea) { width: 100%; min-width: 0; min-height: 37px; padding-block: 5px; }
+.pr-workspace textarea { min-height: 72px; }
+.pr-workspace .source-preview { max-width: none; padding: 7px 10px; background: #edf4f9; color: #233e50; }
+.pr-create-actions { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.pr-create-actions small { color: #475a60; }
+.pr-create-actions .btn { margin-left: auto; }
+.pr-register-header, .pr-register-heading { display: flex; align-items: center; gap: 10px; }
+.pr-register-header { justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
+.pr-register-mark { width: 36px; height: 36px; }
+.pr-register .table-scroll { border: 1px solid #deebe3; border-radius: 7px; }
+.reference-shell .content .pr-register .table-scroll { max-height: clamp(15rem, 35vh, 24rem); }
+.pr-register .table { min-width: 780px; }
+.pr-register .table thead th { background: #e5f3e8; }
+.pr-register .table tbody th { position: static; background: transparent; text-align: left; font-weight: 650; }
+.pr-register .table tbody tr:nth-child(even) { background: #f5f8f6; }
+.pr-register .table :is(th,td) { padding: 6px 9px; vertical-align: middle; }
+.reference-shell #mainContent .pr-register .table td { font-size: .875rem; line-height: 1.35; }
+.pr-register .table :is(th,td):nth-child(4) { min-width: 9.5rem; }
+.pr-register .table :is(th,td):nth-child(5) { white-space: nowrap; }
+.pr-register .badge.ok { background: #ddefdf; color: #154c2e; }
+.pr-register .badge .icon { width: 14px; height: 14px; vertical-align: middle; margin-right: 3px; }
+.pr-row-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pr-register .pr-row-button { min-height: 31px; padding: 3px 9px; background: #fff; border-color: #b8d9c0; color: #145a39; }
+.pr-register .pr-row-button:hover { background: #eaf5ec; }
+.pr-register .dataset-pagination { margin: 8px 0 0; flex-wrap: wrap; }
+.pr-register .pr-pagination { justify-content: space-between; }
+.pr-page-links { display: flex; align-items: center; gap: 6px; }
+.pr-page-links .icon { width: 16px; height: 16px; }
+@media (max-width: 1100px) {
+  .pr-workspace .record-filter-bar form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 680px) {
+  .pr-workspace .pr-create-grid { grid-template-columns: minmax(0,1fr); }
+  .pr-workspace > .card { padding: 11px; }
+  .pr-workspace .record-filter-bar label:first-of-type { grid-column: 1 / -1; }
+}
