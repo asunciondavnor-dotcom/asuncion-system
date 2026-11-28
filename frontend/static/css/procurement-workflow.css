@@ -687,3 +687,52 @@ body.reference-shell:has(.aoq-reference-workspace) .sidebar {background:#00482f}
   .app-review-summary > div:nth-child(odd) { border-right: 1px solid #dbe4e8; }
   .app-review-workspace .stored-field-grid { grid-template-columns: minmax(0,1fr); }
 }
+
+/* Purchase Orders */
+.po-workspace { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
+.po-workspace > :is(.card,.dataset-pagination) { margin: 0; }
+.po-workspace > .card { padding: 14px; border: 1px solid #dce6e1; border-radius: 8px; }
+.po-workspace .record-filter-bar form {
+  display: grid; grid-template-columns: minmax(10rem,1.55fr) minmax(7rem,1.15fr) repeat(2,minmax(6rem,1fr)) auto;
+  align-items: end; gap: 10px 16px; margin: 0;
+}
+.po-workspace .record-filter-bar label { min-width: 0; }
+.po-workspace .record-filter-bar :is(input,select) { width: 100%; }
+.po-workspace .record-filter-bar .ppmp-search input { padding-left: 34px; }
+.po-workspace .record-filter-bar .btn,.po-workspace .po-row-action {
+  justify-self: start; color: #16572f; border-color: #a8ccb0; background: #f4faf5;
+}
+.po-workspace .po-row-action:hover { background: #e3f3e6; }
+.po-workspace .po-workspace-card > h2 { margin: 0 0 7px; font-size: clamp(1.35rem,2.4vw,1.7rem); }
+.po-quotation-picker label { display: grid; gap: 3px; width: min(100%,24rem); }
+.po-quotation-picker select { min-width: 0; width: 100%; }
+.po-empty-source,.po-record-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.po-empty-source > .icon,.po-record-notice > .icon { flex: none; width: 18px; height: 18px; color: #196044; }
+.po-workspace .po-record-no { margin: 12px 0 0; font-size: 1.2rem; }
+.po-record-summary > span + span::before { content: "·"; padding-right: 6px; color: var(--muted); }
+.po-record-summary > .badge::before { display: none; }
+.po-register-title { margin: 14px 0 8px; }
+.po-workspace .po-workspace-card .po-register { max-height: clamp(240px,42vh,420px); }
+.po-workspace :is(.po-register,.po-line-items) { border-color: #dce6e1; border-radius: 8px; }
+.po-register .table { min-width: 650px; }
+.po-line-items .table { min-width: 870px; }
+.po-workspace .table thead th { background: #e2f0e6; color: #14221b; }
+.po-workspace .table :is(th,td) { vertical-align: middle; padding: 7px 9px; }
+.po-register .table tbody th { position: static; background: inherit; font: inherit; }
+.po-register .table tbody tr:nth-child(even) th { background: #fafbfd; }
+.po-register .table :is(th,td) { padding-block: 5px; }
+.po-workspace .po-row-action { min-height: 28px; padding: 3px 9px; }
+.po-workspace .po-record-notice { display: flex; align-items: flex-start; gap: 9px; margin: 14px 0 0; }
+.po-workspace .po-approved-notice { border-color: #d4e5db; border-left-color: #609b7d; background: #f1f8f3; }
+.po-workspace .po-record-actions { flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.po-approval-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; }
+.po-approval-controls label { display: flex; align-items: baseline; gap: 5px; }
+.po-pagination { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 10px; font-size: .85em; }
+.po-page-links { gap: 5px; flex-wrap: wrap; }
+.po-page-links .btn { min-width: 30px; justify-content: center; }
+@media (max-width: 1050px) {
+  .po-workspace .record-filter-bar form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 620px) {
+  .po-workspace .record-filter-bar label:first-of-type { grid-column: 1/-1; }
+}

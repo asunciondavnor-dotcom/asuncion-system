@@ -1,26 +1,115 @@
 {% extends 'base.html' %}
 {% from 'pr_po_verification_ui.html' import item_value with context %}
-{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
+{% from 'procurement_ui.html' import aoq_icon %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='purchase-orders-1')}}">{% endblock %}
+{% block record_filters %}{% endblock %}
+{% block record_pagination %}{% endblock %}
 {% block content %}
-<section class="card"><h2>Purchase Orders</h2>
-{% if not revised_workflow_active %}<p class="notice">The authorized procurement workflow is unavailable. Existing records remain readable.</p>{% endif %}
-{% if not selected_po %}
-<form method="get" action="{{url_for('po')}}" class="source-bar" data-auto-filters data-record-navigation><input type="hidden" name="_nav" value="{{navigation_token()}}">
-<label>Approved AOQ<select name="aoq_id" required><option value="">Select Approved AOQ</option>{% for a in aoqs %}<option value="{{a.id}}" {{'selected' if selected_aoq and selected_aoq.id==a.id}}>{{a.no}} — {{a.winner}}</option>{% endfor %}</select></label><noscript><button class="btn" type="submit">View quotation</button></noscript></form>
-{% if not aoqs %}<p class="muted">No approved AOQ is waiting for PO creation.</p>{% endif %}
-{% endif %}
-{% set document=selected_po or selected_aoq %}
-{% if document %}<h3>{{selected_po.no if selected_po else selected_aoq.no}}</h3>
-{% set recorded_total=selected_po.total if selected_po else selected_aoq.winning_amount %}<p><strong>Supplier:</strong> {{selected_po.supplier if selected_po else selected_aoq.winner}} · <strong>Total:</strong> {{recorded_total|money if recorded_total is not none and recorded_total!='' else 'Not recorded'}}{% if selected_po %} · <span class="badge {{'ok' if selected_po.status=='Approved' else 'warn'}}">{{selected_po.status}}</span>{% endif %}</p>
-{% endif %}
-{% if document %}<div class="table-scroll"><table class="table"><thead><tr><th>No.</th><th>Item</th>{% if selected_po %}<th>Original Item ID</th><th>Original Filename</th>{% endif %}<th>Description / specifications</th><th>Quantity</th><th>Unit</th><th>Unit price (PHP)</th><th>Total (PHP)</th></tr></thead><tbody>
-{% for item in review_items %}<tr><td>{{loop.index}}</td><td>{{item_value(item,['item','Item Name','name'])}}</td>{% if selected_po %}{% set original=original_references.get(loop.index0,{}) %}<td>{{original.number}}</td><td>{{original.filename}}</td>{% endif %}<td>{{item_value({'description': review_item_description(item)}, ['description'])}}</td><td>{{item_value(item,['qty','Quantity','quantity'])}}</td><td>{{item_value(item,['unit','Unit'])}}</td><td>{{item_value(item,['unit_cost','Unit Cost','Estimated Unit Cost'])}}</td><td>{{item_value(item,['amount','Amount','Total'])}}</td></tr>{% else %}<tr><td colspan="{{9 if selected_po else 7}}">Select an Approved AOQ or a saved PO to review its actual items.</td></tr>{% endfor %}
-</tbody></table></div>{% endif %}
-{% if selected_aoq and not selected_po %}<form method="post" action="{{url_for('po')}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="aoq_id" value="{{selected_aoq.id}}"><button class="btn primary" type="submit" {{'disabled' if workflow_preview or not revised_workflow_active}}>Save PO</button></form>{% endif %}
-{% if selected_po %}
-{% if can_approve and not workflow_preview %}<form method="post" action="{{url_for('po_approve',id=selected_po.id)}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><label><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved PO supplier, items, quantities and prices.</label><label><input type="checkbox" name="final_confirm" value="yes" required> I authorize final PO approval.</label><button class="btn primary" type="submit">Approve PO</button></form>
-{% elif selected_po.status=='For Review' %}<p class="notice">PO approval is temporarily unavailable. Contact your system administrator.</p><button class="btn primary" disabled>Approve PO</button>
-{% elif selected_po.status=='Approved' %}<p class="notice">PO approved and available for PR–PO verification. Receiving requires its own valid evidence.</p>{% endif %}
-<div class="actions"><a class="btn" href="{{url_for('po')}}">Select another AOQ or PO</a><a class="btn" href="{{url_for('po_print',id=selected_po.id)}}">Print PO</a></div>
-{% endif %}{% if not selected_po %}<h3>Saved PO Records</h3><div class="table-scroll"><table class="table"><thead><tr><th>PO</th><th>AOQ</th><th>Supplier</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for saved in rows %}<tr><td>{{saved.no}}</td><td>{{saved.aoq_no}}</td><td>{{saved.supplier}}</td><td>{{saved.status}}</td><td><a class="btn small" href="{{url_for('po',po_id=saved.id)}}">Review</a></td></tr>{% else %}<tr><td colspan="5">No saved POs.</td></tr>{% endfor %}</tbody></table></div>{% if record_pagination %}<nav>{% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1)}}">Previous</a>{% endif %}{% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1)}}">Next</a>{% endif %}</nav>{% endif %}{% endif %}</section>
+<div class="po-workspace">
+  {% with po_workspace=true %}{% include 'record_filters.html' %}{% endwith %}
+  <section class="card po-workspace-card" aria-labelledby="po-workspace-title">
+    <h2 id="po-workspace-title">Purchase Orders</h2>
+    {% if not revised_workflow_active %}<p class="notice">The authorized procurement workflow is unavailable. Existing records remain readable.</p>{% endif %}
+
+    {% if not selected_po %}
+    <form method="get" action="{{url_for('po')}}" class="po-quotation-picker" data-auto-filters data-record-navigation>
+      <input type="hidden" name="_nav" value="{{navigation_token()}}">
+      <label>Approved AOQ<select name="aoq_id" aria-label="Approved AOQ" required>
+        <option value="">Select Approved AOQ</option>
+        {% for a in aoqs %}<option value="{{a.id}}" {{'selected' if selected_aoq and selected_aoq.id==a.id}}>{{a.no}} — {{a.winner}}</option>{% endfor %}
+      </select></label>
+      <noscript><button class="btn" type="submit">View quotation</button></noscript>
+    </form>
+    {% if not aoqs %}<p class="muted po-empty-source">{{aoq_icon('info')}} No approved AOQ is waiting for PO creation.</p>{% endif %}
+    {% endif %}
+
+    {% set document = selected_po or selected_aoq %}
+    {% if document %}
+    <h3 class="po-record-no">{{document.no}}</h3>
+    {% set recorded_total = selected_po.total if selected_po else selected_aoq.winning_amount %}
+    <p class="po-record-summary">
+      <span><strong>Supplier:</strong> {{selected_po.supplier if selected_po else selected_aoq.winner}}</span>
+      <span><strong>Total:</strong> {{recorded_total|money if recorded_total is not none and recorded_total!='' else 'Not recorded'}}</span>
+      {% if selected_po %}<span class="badge {{'ok' if selected_po.status=='Approved' else 'warn'}}">{{selected_po.status}}</span>{% endif %}
+    </p>
+    <div class="table-scroll po-line-items">
+      <table class="table" aria-label="Items for {{document.no}}">
+        <thead><tr><th scope="col">No.</th><th scope="col">Item</th>{% if selected_po %}<th scope="col">Original Item ID</th><th scope="col">Original Filename</th>{% endif %}<th scope="col">Description / specifications</th><th scope="col">Quantity</th><th scope="col">Unit</th><th scope="col">Unit price (PHP)</th><th scope="col">Total (PHP)</th></tr></thead>
+        <tbody>
+          {% for item in review_items %}
+          <tr>
+            <td>{{loop.index}}</td><td>{{item_value(item,['item','Item Name','name'])}}</td>
+            {% if selected_po %}{% set original = original_references.get(loop.index0,{}) %}
+            <td>{{original.number}}</td><td>{{original.filename}}</td>{% endif %}
+            <td>{{item_value({'description': review_item_description(item)}, ['description'])}}</td>
+            <td class="numeric">{{item_value(item,['qty','Quantity','quantity'])}}</td><td>{{item_value(item,['unit','Unit'])}}</td>
+            <td class="numeric">{{item_value(item,['unit_cost','Unit Cost','Estimated Unit Cost'])}}</td>
+            <td class="numeric">{{item_value(item,['amount','Amount','Total'])}}</td>
+          </tr>
+          {% else %}<tr><td colspan="{{9 if selected_po else 7}}" class="empty-state">No items are recorded for this document.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if selected_aoq and not selected_po %}
+    <form class="po-record-actions" method="post" action="{{url_for('po')}}">
+      <input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="aoq_id" value="{{selected_aoq.id}}">
+      <button class="btn primary" type="submit" {{'disabled' if workflow_preview or not revised_workflow_active}}>Save PO</button>
+    </form>
+    {% endif %}
+
+    {% if selected_po %}
+      {% if can_approve and not workflow_preview %}
+      <form class="po-approval-controls" method="post" action="{{url_for('po_approve',id=selected_po.id)}}">
+        <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+        <label><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved PO supplier, items, quantities and prices.</label>
+        <label><input type="checkbox" name="final_confirm" value="yes" required> I authorize final PO approval.</label>
+        <button class="btn primary" type="submit">Approve PO</button>
+      </form>
+      {% elif selected_po.status=='For Review' %}
+      <p class="notice po-record-notice">PO approval is temporarily unavailable. Contact your system administrator.</p><button class="btn primary" disabled>Approve PO</button>
+      {% elif selected_po.status=='Approved' %}
+      <p class="notice po-record-notice po-approved-notice">{{aoq_icon('info')}} <span>PO approved and available for PR–PO verification. Receiving requires its own valid evidence.</span></p>
+      {% endif %}
+      <div class="actions po-record-actions">
+        <a class="btn" href="{{pagination_url(record_pagination.page,po_id=none) if record_pagination else url_for('po')}}">Select another AOQ or PO</a>
+        <a class="btn primary" href="{{url_for('po_print',id=selected_po.id)}}">{{aoq_icon('print')}} Print PO</a>
+      </div>
+    {% else %}
+      <h3 class="po-register-title">Saved PO Records</h3>
+      <div class="table-scroll po-register">
+        <table class="table" aria-label="Saved PO Records">
+          <thead><tr><th scope="col">PO</th><th scope="col">AOQ</th><th scope="col">Supplier</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+          <tbody>
+            {% for saved in rows %}
+            <tr><th scope="row">{{saved.no}}</th><td>{{saved.aoq_no}}</td><td>{{saved.supplier}}</td><td>{{saved.status}}</td>
+              <td><a class="btn small po-row-action" href="{{pagination_url(record_pagination.page,po_id=saved.id) if record_pagination else url_for('po',po_id=saved.id)}}" aria-label="Review {{saved.no}}">Review</a></td>
+            </tr>
+            {% else %}<tr><td colspan="5" class="empty-state">{{'No purchase orders match these filters.' if request.args.get('q') or request.args.get('status') or request.args.get('year') else 'No saved purchase orders.'}}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if record_pagination %}
+      {% set current = record_pagination.page %}
+      {% set page_count = [1,(record_pagination.total / record_pagination.size)|round(0,'ceil')|int]|max %}
+      {% set first = [1,[current-2,page_count-4]|min]|max %}
+      {% set last = [page_count,first+4]|min %}
+      <nav class="po-pagination" aria-label="Record pages" data-record-navigation>
+        <span>Page {{current}} · {{record_pagination.total}} matching records · Up to {{record_pagination.size}} records per page</span>
+        <div class="actions po-page-links">
+          {% if current>1 %}<a class="btn small" href="{{pagination_url([current-1,page_count]|min)}}" aria-label="Previous page">{{aoq_icon('previous')}}</a>{% endif %}
+          {% if first>1 %}<a class="btn small" href="{{pagination_url(1)}}">1</a>{% if first>2 %}<span>…</span>{% endif %}{% endif %}
+          {% for number in range(first,last+1) %}
+          {% if number==current %}<span class="btn small primary" aria-current="page">{{number}}</span>{% else %}<a class="btn small" href="{{pagination_url(number)}}">{{number}}</a>{% endif %}
+          {% endfor %}
+          {% if last<page_count %}{% if last<page_count-1 %}<span>…</span>{% endif %}<a class="btn small" href="{{pagination_url(page_count)}}">{{page_count}}</a>{% endif %}
+          {% if record_pagination.has_next %}<a class="btn small" href="{{pagination_url(current+1)}}" aria-label="Next page">{{aoq_icon('next')}}</a>{% endif %}
+        </div>
+      </nav>
+      {% endif %}
+    {% endif %}
+  </section>
+  {% if selected_po %}{% include 'record_pagination.html' %}{% endif %}
+</div>
 {% endblock %}

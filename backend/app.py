@@ -156,13 +156,17 @@ def record_year_filter():
     return year
 
 
-def record_year_sql():
+def record_year_expression():
     # Avoid question marks inside regex literals: the existing DB adapter treats
     # every question mark as a parameter. Preserve fiscal/no/date precedence.
     return """coalesce(case when to_jsonb(records)->>'year' ~ '^(19|20|21)[0-9]{2}$'
         then to_jsonb(records)->>'year' end,
         (regexp_match(to_jsonb(records)->>'no','(^|-)((19|20|21)[0-9]{2})(-|$)'))[2],
-        substring(coalesce(to_jsonb(records)->>'created_at',to_jsonb(records)->>'dt') from '((19|20|21)[0-9]{2})'))=?"""
+        substring(coalesce(to_jsonb(records)->>'created_at',to_jsonb(records)->>'dt') from '((19|20|21)[0-9]{2})'))"""
+
+
+def record_year_sql():
+    return record_year_expression() + "=?"
 
 
 def paged_q(sql,params=()):
@@ -3600,7 +3604,9 @@ def po():
         aoq_id=revised_procurement.identifier(request.args['aoq_id'])
         selected_aoq=next((a for a in aoqs if a['id']==aoq_id),None)
         if selected_aoq:review_items=parse_items(selected_aoq.get('winning_offer'))
-    return render_template('po.html',active='po',rows=rows,aoqs=aoqs,title='Purchase Orders',
+    year_rows = q(f"select distinct {record_year_expression()} as record_year from po records order by record_year desc")
+    record_years = [entry['record_year'] for entry in year_rows if entry['record_year']]
+    return render_template('po.html',active='po',rows=rows,aoqs=aoqs,title='Purchase Orders',record_years=record_years,
         revised_workflow_active=revised_procurement.enabled(globals()),selected_po=selected_po,
         selected_aoq=selected_aoq,review_items=review_items,can_approve=can_approve,original_references=original_references)
 
