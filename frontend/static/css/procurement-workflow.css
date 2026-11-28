@@ -760,12 +760,34 @@ body.reference-shell:has(.aoq-reference-workspace) .sidebar {background:#00482f}
 .verification-dialog-icon .icon { width: 23px; height: 23px; }
 .verification-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 16px 20px; }
 .verification-dialog-body > :is(details,.pr-po-action-panel) { margin: 12px 0; }
-.verification-dialog-body > details { padding: 10px 12px; border: 1px solid #dce6df; border-radius: 7px; }
++.verification-dialog .verification-disclosure { border: 1px solid #d6e5dc; border-radius: 7px; }
+.verification-disclosure > summary {
+  padding: 7px 10px; border-radius: 6px; background: #e7f3eb; color: #161b18;
+  font-size: .95rem; font-weight: 700;
+}
+.verification-disclosure > summary::marker { color: #161b18; }
+.verification-disclosure-content { padding: 0 10px; }
+.verification-dialog .verification-disclosure-content > p { margin: 6px 0; }
+.verification-dialog .table-scroll { margin: 9px 0 0; }
+.verification-dialog .verification-disclosure-content .table-scroll { margin: 6px 0 9px; }
+.verification-dialog .table :is(th,td) { padding: 6px 8px; }
+.verification-dialog .pr-po-result-summary { gap: 10px; margin-top: 6px; }
+.verification-dialog .pr-po-result-panel { padding: 10px 12px; }
+.verification-dialog .pr-po-result-panel .actions { gap: 7px; margin-top: 0; }
+.verification-dialog-footer:not([hidden]) {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: none;
+  padding: 9px 20px; border-top: 1px solid #dce6df; background: #f8fbf9;
+}
+.verification-source-links { display: flex; flex-wrap: wrap; gap: 7px; }
+.verification-source-links .btn { color: #16572f; border-color: #a8ccb0; background: #f5fbf5; }
+.verification-dialog .verification-decision-button { margin-inline-start: auto; }
 .verification-dialog-body .pr-po-record-heading h3 { margin-bottom: 4px; }
 body:has(.verification-dialog:modal) { overflow: hidden; }
 @media(max-width:620px) {
   .verification-dialog { width: calc(100% - 14px); max-height: 94dvh; }
-  .verification-dialog-header,.verification-dialog-body { padding: 12px; }
+  .verification-dialog-header,.verification-dialog-body,.verification-dialog-footer:not([hidden]) { padding: 10px 12px; }
+  .verification-dialog .pr-po-result-summary { gap: 6px; }
+  .verification-dialog .verification-decision-button { margin-inline-start: 0; }
 }
 
 

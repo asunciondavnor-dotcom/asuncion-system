@@ -2,7 +2,7 @@
 {% from 'pr_po_verification_ui.html' import result_badge,outcome_badge,result_summary,comparison_table,findings_table,model_assessment,source_approval_summary with context %}
 {% from 'ui.html' import icon %}
 {% from 'procurement_ui.html' import aoq_icon %}
-{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='verification-layout-1')}}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='verification-modal-layout-2')}}">{% endblock %}
 {% block record_filters %}{% endblock %}
 {% block record_pagination %}{% endblock %}
 {% block content %}
@@ -28,6 +28,13 @@
   </section>
   {% endif %}
 {% set records_url = pagination_url(record_pagination.page,verification_id=none,pr_id=none,po_id=none) if record_pagination and not historical|default(false) else url_for('nlp') %}
+{% set v = verification %}
+{% set show_source_links = v and not historical|default(false) and (v.display.status!='Match' or v.display.model_disagreement) %}
+{% set can_decide = v and not historical|default(false) and not workflow_preview|default(false)
+  and v.row.workflow_version==2 and v.po.status=='Approved' and v.can_review_relationship
+  and v.source_evidence_current and not v.stale and v.review_stage_ready %}
+{% set can_save_review = can_decide and v.row.status=='For Review' %}
+{% set can_approve_review = can_decide and v.row.status=='Reviewed' and v.approval_available %}
 <dialog class="verification-dialog" id="verificationReviewDialog" aria-labelledby="verificationReviewTitle" data-item-review{% if verification %} open data-open-verification{% endif %}>
   <header class="verification-dialog-header">
     <span class="verification-dialog-icon">{{icon('check')}}</span>
@@ -35,7 +42,7 @@
     <a class="btn small" href="{{records_url}}#verificationRecords" data-close-verification>{{icon('close')}} Close</a>
   </header>
   <div class="verification-dialog-body" data-verification-details tabindex="0" role="region" aria-label="Verification details">
-{% if verification %}{% set v=verification %}
+{% if v %}
 <header class="pr-po-record-heading">
   <h3>{{v.row.no}}</h3>
   <p class="muted">PR {{v.pr.no}} · PO {{v.po.no}} · Verification status: {{v.row.status}}</p>
@@ -43,15 +50,20 @@
 {{result_summary(v.display,v.row.result,v.row.confidence,v.model_assessment|default(none))}}
 {% if v.model_assessment %}
 {{model_assessment(v.model_assessment)}}
-<details><summary>View item checks for approval</summary>{{source_approval_summary(v.display)}}{{comparison_table(v.display)}}</details>
+<details class="verification-disclosure" open>
+  <summary>View item checks for approval</summary>
+  <div class="verification-disclosure-content">{{source_approval_summary(v.display)}}{{comparison_table(v.display)}}</div>
+</details>
 {% else %}
 {{comparison_table(v.display)}}
 {% endif %}
-{% if not historical|default(false) and (v.display.status!='Match' or v.display.model_disagreement) %}<div class="actions"><a class="btn" href="{{url_for('pr_review',id=v.pr.id)}}">Review linked PR</a><a class="btn" href="{{url_for('po_review',id=v.po.id)}}">Review linked PO</a></div>{% endif %}
-<details><summary>View saved findings</summary>{{findings_table(v.display,v.pr.id|default(none),v.po.id|default(none))}}</details>
+<details class="verification-disclosure" open>
+  <summary>View saved findings</summary>
+  <div class="verification-disclosure-content">{{findings_table(v.display,v.pr.id|default(none),v.po.id|default(none))}}</div>
+</details>
 
 {% endif %}
-{% if verification and not historical|default(false) %}{% set v=verification %}
+{% if v and not historical|default(false) %}
 {% if v.refresh_available|default(false) and not workflow_preview|default(false) %}<form method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card pr-po-action-panel">
 <input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="review_action" value="recalculate">
 <h3>Recalculate current sources</h3>
@@ -61,8 +73,8 @@
 {% if v.row.workflow_version==2 and not workflow_preview|default(false) %}
 {% if v.po.status!='Approved' or not v.can_review_relationship or not v.source_evidence_current or v.stale %}<div class="card pr-po-action-panel"><h3>Approve verification</h3><button class="btn primary" type="button" disabled>Approve PR–PO Review</button><p>Approval requires an approved PO, an authorized reviewer and unchanged source evidence. Reopen the current source documents before continuing.</p></div>
 {% elif not v.review_stage_ready %}<div class="card pr-po-action-panel"><h3>Approve verification</h3><button class="btn primary" type="button" disabled>Approve PR–PO Review</button><p>Review and approval are temporarily unavailable. Contact your system administrator.</p></div>
-{% elif v.row.status=='For Review' %}
-<form method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card pr-po-action-panel">
+{% elif can_save_review %}
+<form id="verificationDecisionForm" method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card pr-po-action-panel">
 <input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="review_action" value="review">
 <h3>Review verification</h3>
 <div class="pr-po-action-fields">
@@ -71,10 +83,9 @@
 </div>
 <label class="review-confirm-check"><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved PR–PO findings and source documents.</label>
 <p class="muted">After review, an authorized approver can confirm a fully verified exact match.</p>
-<div class="pr-po-action-footer"><button class="btn primary" type="submit">Save review</button></div>
 </form>
-{% elif v.row.status=='Reviewed' and v.approval_available %}
-<form method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card pr-po-action-panel">
+{% elif can_approve_review %}
+<form id="verificationDecisionForm" method="post" action="{{url_for('nlp_approve',id=v.row.id)}}" class="card pr-po-action-panel">
 <input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="review_action" value="approve">
 <h3>Approve verification</h3>
 {% if v.tolerance_ready and v.tolerance_eligible %}<p class="notice">All source checks match ({{v.display.percentage}} discrepancy). Confirm the supporting documents to approve the relationship.</p>{% endif %}<div class="pr-po-action-fields">
@@ -83,13 +94,23 @@
 </div>
 <label class="review-confirm-check"><input type="checkbox" name="review_confirm" value="yes" required> I reviewed the saved PR–PO findings and source documents.</label>
 <label class="review-confirm-check"><input type="checkbox" name="final_confirm" value="yes" required> I authorize this documented PR–PO relationship.</label>
-<div class="pr-po-action-footer"><button class="btn primary" type="submit">Approve PR–PO Review</button></div>
 </form>
 {% elif v.row.status=='Reviewed' %}<div class="card pr-po-action-panel"><h3>Approve verification</h3><button class="btn primary" type="button" disabled aria-describedby="nlp-approval-blocked">Approve PR–PO Review</button><p id="nlp-approval-blocked">Approval unavailable: {% if v.tolerance_ready and not v.tolerance_eligible %}approval based on the source match requires a final 0.00% discrepancy, resolved checks and confirmed item correspondence.{% elif not v.score_ready %}the source-based approval checks are unavailable, and the saved model prediction requires correction or review.{% elif v.stale or not v.source_evidence_current %}the source documents or saved evidence changed; reopen the current verification.{% else %}one or more saved item checks remain unresolved. Open the saved checks above and compare the source documents.{% endif %} This record cannot authorize receiving yet.</p></div>
 {% endif %}{% endif %}{% endif %}
 {% if verification and verification.row.status=='Approved' and verification.inspection_ready|default(false) %}<a class="btn primary" href="{{url_for('iar',po_id=verification.po.id)}}">Continue to IAR / AIR</a>{% endif %}
 {% if verification and not historical|default(false) and verification.row.workflow_version==2 and verification.row.status=='Reviewed' %}<p><a class="btn" href="{{url_for('iar',verification_id=verification.row.id)}}">Open Inspection Preparation</a> Review the findings in IAR/AIR. Official receiving requires PR-PO approval.</p>{% endif %}
   </div>
+  <footer class="verification-dialog-footer" data-verification-footer{% if not (show_source_links or can_save_review or can_approve_review) %} hidden{% endif %}>
+    {% if show_source_links %}
+    <div class="verification-source-links">
+      <a class="btn small" href="{{url_for('pr_review',id=v.pr.id)}}">{{aoq_icon('eye')}} Review linked PR</a>
+      <a class="btn small" href="{{url_for('po_review',id=v.po.id)}}">{{aoq_icon('eye')}} Review linked PO</a>
+    </div>
+    {% endif %}
+    {% if can_save_review or can_approve_review %}
+    <button class="btn primary verification-decision-button" type="submit" form="verificationDecisionForm">{{icon('check')}} {{'Save review' if can_save_review else 'Approve verification'}}</button>
+    {% endif %}
+  </footer>
 </dialog>
 {% if historical|default(false) %}<p><a class="btn" href="{{records_url}}">Back to Verification Records</a></p>{% endif %}
 {% if not historical|default(false) %}
@@ -120,4 +141,4 @@
 {% endif %}
 </div>
 {% endblock %}
-{% block scripts %}<script defer src="{{url_for('static',filename='js/pr-po-selection.js',v='verification-layout-1')}}"></script>{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/pr-po-selection.js',v='verification-modal-layout-2')}}"></script>{% endblock %}

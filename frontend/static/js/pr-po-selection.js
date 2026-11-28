@@ -38,6 +38,7 @@
   const dialog = document.getElementById('verificationReviewDialog');
   if (!dialog || typeof dialog.showModal !== 'function') return;
   const body = dialog.querySelector('[data-verification-details]');
+  const footer = dialog.querySelector('[data-verification-footer]');
   const close = dialog.querySelector('[data-close-verification]');
   const direct = dialog.hasAttribute('data-open-verification');
   let launcher;
@@ -85,6 +86,8 @@
     pending?.abort();
     body.removeAttribute('aria-busy');
     body.replaceChildren();
+    footer.replaceChildren();
+    footer.hidden = true;
     launcher?.focus();
   });
 
@@ -102,10 +105,14 @@
       const response = await fetch(link.href, { cache: 'no-store', signal: request.signal });
       if (!response.ok || response.redirected) throw new Error('Verification could not be loaded');
       const page = new DOMParser().parseFromString(await response.text(), 'text/html');
-      const details = page.querySelector('#verificationReviewDialog[data-open-verification] [data-verification-details]');
-      if (!details) throw new Error('Verification details are unavailable');
+      const record = page.querySelector('#verificationReviewDialog[data-open-verification]');
+      const details = record?.querySelector('[data-verification-details]');
+      const actions = record?.querySelector('[data-verification-footer]');
+      if (!details || !actions) throw new Error('Verification details are unavailable');
       if (!request.signal.aborted) {
         body.replaceChildren(...details.childNodes);
+        footer.replaceChildren(...actions.childNodes);
+        footer.hidden = actions.hidden;
         body.scrollTop = 0;
       }
     } catch (error) {
