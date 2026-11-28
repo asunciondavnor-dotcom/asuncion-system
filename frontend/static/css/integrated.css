@@ -235,3 +235,20 @@
     display:inline-flex;align-items:center;gap:.45em;
   }
 }
+
+/* Keep account actions compact in the directory and place editing in dialogs. */
+.user-directory-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.user-directory-toolbar h2 { margin: 0; }
+.user-directory { margin-top: 18px; }
+.user-directory tbody th { position: static; font-weight: 650; text-align: left; }
+.user-recovery-cell { min-width: 12rem; }
+.user-recovery-address { display: block; margin-bottom: 4px; overflow-wrap: anywhere; }
+.user-directory .user-directory-actions { margin: 0; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+.user-directory-actions .btn { white-space: nowrap; }
+.user-directory-dialog { width: min(510px, calc(100% - 24px)); }
+.user-directory-dialog .item-review-heading p { margin: 0; overflow-wrap: anywhere; }
+.user-directory-dialog .item-review-body > p { margin: 0 0 14px; }
+.user-directory-dialog .stack { gap: 12px; }
+.user-directory-dialog .stack label { display: grid; gap: 4px; font-weight: 600; }
+.user-directory-dialog :is(input:not([type=hidden]), textarea) { width: 100%; }
+.user-directory-dialog .user-dialog-actions { justify-content: flex-end; margin: 0; }
