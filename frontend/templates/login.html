@@ -64,7 +64,6 @@
         {% if forgot_password_enabled %}
         <nav class="login-support-links" aria-label="Account help">
           <a href="{{url_for('account_otp.public')}}">Forgot Password?</a>
-          {% if otp_enabled %}<a href="{{url_for('account_otp.public',mode='activate')}}">Activate Gmail</a>{% endif %}
         </nav>
         {% endif %}
         <footer class="login-official-footer">Municipality of Asuncion</footer>

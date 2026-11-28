@@ -1,16 +1,63 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Gmail verification — Asuncion</title><link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}"><link rel="stylesheet" href="{{url_for('static',filename='css/reference-layout.css')}}"></head><body>
-<main class="content"><section class="card"><h1>{{'Activate Gmail and create your password' if kind=='activate' else 'Verify registered Gmail' if kind=='verify' else 'Forgot Password'}}</h1>
-{% for category,message in get_flashed_messages(with_categories=true) %}<p class="notice" role="status">{{message}}</p>{% endfor %}
-<form method="post" class="stack" autocomplete="off"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="request">
-<label>Username<input name="username" minlength="3" maxlength="80" autocomplete="username" required></label>
-<label>Registered Gmail<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
-<button type="submit" class="btn">Request code</button></form>
-<p>A code expires 180 seconds after issuance. Two incorrect attempts exhaust it. A new code invalidates the previous code.</p>
-{% if pending %}<form method="post" class="stack" autocomplete="off"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="action" value="complete">
-<label>Six-digit code<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" required></label>
-{% if kind!='verify' %}<label>New password<input name="new_password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" data-password-policy required><small>{{password_short_guidance}}</small><small data-password-feedback role="status" aria-live="polite"></small></label>
-<label>Confirm new password<input name="confirm_password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>{% endif %}
-<button type="submit" class="btn primary">{{'Verify Gmail' if kind=='verify' else 'Verify code and save password'}}</button></form>{% endif %}
-<p><a class="btn" href="{{url_for('login')}}">Back to sign in</a></p></section></main>
-<script type="application/json" id="employee-password-policy">{{password_client_policy()|tojson}}</script><script src="{{url_for('static',filename='js/procurement-workspace.js')}}" defer></script></body></html>
+{% from 'ui.html' import icon %}
+{% set heading = {'forgot':'Forgot Password','activate':'Set up your account','verify':'Verify your Gmail'}[kind] %}
+{% set intro = {'forgot':'Request a verification code to reset your password.','activate':'Verify your Gmail address and create your first password.','verify':'Confirm ownership of your registered Gmail address.'}[kind] %}
+{% macro request_form() %}
+<form method="post" class="recovery-form">
+  <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+  <input type="hidden" name="action" value="request">
+  <label>Username<input name="username" minlength="3" maxlength="80" autocomplete="username" placeholder="Enter your username" required></label>
+  <label>Registered Gmail<input name="email" type="email" maxlength="254" autocomplete="email" placeholder="Enter your registered Gmail" required></label>
+  <p class="recovery-note">{{icon('check')}}<span>Codes expire after 3 minutes. After 2 incorrect attempts, request a new code. A new code replaces the previous one.</span></p>
+  <button type="submit" class="btn primary">Request code</button>
+</form>
+{% endmacro %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{heading}} · Asuncion</title>
+  <link rel="stylesheet" href="{{url_for('static',filename='css/style.css')}}">
+  <link rel="stylesheet" href="{{url_for('static',filename='css/integrated.css')}}">
+  <link rel="icon" href="{{url_for('static',filename='images/asuncion-seal.png')}}">
+</head>
+<body class="recovery-page">
+  <main class="recovery-panel" aria-labelledby="recovery-title">
+    <div class="recovery-art" aria-hidden="true">
+      <div class="recovery-envelope"><span class="recovery-letter"><span class="recovery-lock"></span></span></div>
+    </div>
+    <div class="recovery-content">
+      <header>
+        <h1 id="recovery-title">{{heading}}</h1>
+        <p>{{intro}}</p>
+      </header>
+      {% for category,message in get_flashed_messages(with_categories=true) %}
+      <p class="notice" data-category="{{category}}" role="{{'alert' if category in ('error','danger') else 'status'}}">{{message}}</p>
+      {% endfor %}
+      {% if pending %}
+        <form method="post" class="recovery-form">
+          <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+          <input type="hidden" name="action" value="complete">
+          <label>Six-digit code<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" required></label>
+          {% if kind!='verify' %}
+          <label>New password<input name="new_password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" data-password-policy required><small>{{password_short_guidance}}</small><small data-password-feedback role="status" aria-live="polite"></small></label>
+          <label>Confirm new password<input name="confirm_password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+          {% endif %}
+          <button type="submit" class="btn primary">{{'Verify Gmail' if kind=='verify' else 'Verify code and save password'}}</button>
+        </form>
+        <details class="recovery-resend"><summary>Request a new code</summary>{{request_form()}}</details>
+      {% else %}
+        {{request_form()}}
+      {% endif %}
+      <a class="btn recovery-back" href="{{url_for('account') if kind=='verify' and session.get('logged_in') else url_for('login')}}">{{'Back to My Account' if kind=='verify' and session.get('logged_in') else 'Back to sign in'}}</a>
+      {% if kind=='forgot' and otp_enabled %}
+        <p class="recovery-switch">First time signing in? <a href="{{url_for('account_otp.public',mode='activate')}}">Set up your account</a></p>
+      {% elif kind=='activate' %}
+        <p class="recovery-switch">Already set a password? <a href="{{url_for('account_otp.public')}}">Forgot Password?</a></p>
+      {% endif %}
+    </div>
+  </main>
+  <script type="application/json" id="employee-password-policy">{{password_client_policy()|tojson}}</script>
+  <script src="{{url_for('static',filename='js/procurement-workspace.js')}}" defer></script>
+</body>
+</html>
