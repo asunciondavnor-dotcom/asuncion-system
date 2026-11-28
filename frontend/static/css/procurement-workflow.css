@@ -586,3 +586,68 @@ body.reference-shell:has(.aoq-reference-workspace) .sidebar {background:#00482f}
   .ppmp-overview .record-filter-bar label:first-of-type, .ppmp-inventory-page .ppmp-filter-grid label:nth-of-type(2) { grid-column: 1/-1; }
   .ppmp-inventory-page .dataset-destination-panel { padding-left: 0; border: 0; }
 }
+
+/* Annual Procurement Plan */
+.app-workspace { display: grid; grid-template-columns: minmax(0,1fr); gap: 15px; }
+.app-workspace > :is(.card,.dataset-pagination,.procurement-workspace-hero) { margin: 0; }
+.app-workspace > .card { padding: 14px; border: 1px solid #d9e2e8; border-radius: 9px; }
+.app-workspace .procurement-workspace-hero { padding: 0; border: 0; background: transparent; }
+.app-workspace .procurement-workspace-title h2 { font-size: clamp(1.4rem,2.6vw,2rem); }
+.app-workspace :is(.procurement-workspace-mark,.app-section-mark) {
+  display: grid; place-items: center; flex: none; border-radius: 8px; background: #e1f2e5; color: #15552d;
+}
+.app-workspace .procurement-workspace-mark { width: 50px; height: 50px; }
+.app-workspace .procurement-workspace-mark .icon { width: 28px; height: 28px; }
+.app-section-mark { width: 40px; height: 40px; }
+.app-section-mark .icon { width: 24px; height: 24px; }
+.app-section-heading, .app-filter-heading { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.app-filter-heading .icon, .app-source-preview > .icon { width: 19px; height: 19px; flex: none; }
+.app-section-heading h3 { margin: 0; }
+.app-section-heading p { margin: 2px 0 0; }
+.app-workspace .record-filter-bar form {
+  display: grid; grid-template-columns: minmax(10rem,1.6fr) repeat(3,minmax(7rem,1fr)) auto;
+  align-items: end; gap: 10px 14px; margin: 0;
+}
+.app-workspace .record-filter-bar label { min-width: 0; }
+.app-workspace .record-filter-bar :is(input,select) { width: 100%; }
+.app-workspace .record-filter-bar .ppmp-search input { padding-left: 34px; }
+.app-workspace .record-filter-bar .btn, .app-row-actions .btn {
+  color: #16572f; background: #f5fbf5; border-color: #a8ccb0;
+}
+.app-source-controls { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: start; }
+.app-source-controls .record-selector {
+  position: relative; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); column-gap: 12px;
+}
+.app-source-controls .record-selector::before {
+  content: ""; position: absolute; top: 13px; left: 12px; width: 11px; height: 11px;
+  border: 2px solid currentColor; border-radius: 50%; pointer-events: none;
+}
+.app-source-controls .record-selector::after {
+  content: ""; position: absolute; top: 25px; left: 22px; width: 6px; height: 2px;
+  background: currentColor; transform: rotate(45deg); pointer-events: none;
+}
+.app-source-controls input[type=search] { padding-left: 35px; }
+.app-source-controls .record-selector small { grid-column: 1/-1; }
+.app-source-controls :is(input,select,button) { min-height: 42px; }
+.app-source-controls > select { min-width: 0; }
+.app-source-preview { display: flex; align-items: flex-start; gap: 9px; margin-top: 10px; padding: 10px 12px; border-radius: 7px; background: #e8f2fc; }
+.app-source-preview > .icon { flex: none; color: #245a97; }
+.app-source-preview #appSource { flex: 1; max-width: none; min-width: 0; padding: 0; border: 0; background: transparent; }
+.app-source-empty { margin: 8px 0 0; }
+.app-register { max-height: clamp(240px,32vh,400px); background: #fff; border-color: #d9e2e8; }
+.app-workspace .app-register .table { min-width: 750px; }
+.app-register .table thead th { background: #e9eef5; color: #142231; }
+.app-register .table :is(th,td) { vertical-align: middle; padding: 8px 10px; }
+.app-register .table tbody th { background: inherit; font: inherit; }
+.app-register .table tbody tr:nth-child(even) th { background: #fafbfd; }
+.app-row-actions { display: flex; gap: 6px; width: max-content; }
+.app-row-actions .btn:hover { background: #e3f3e6; }
+.app-workspace > .dataset-pagination { justify-content: flex-start; flex-wrap: wrap; }
+@media (max-width: 1050px) {
+  .app-workspace .record-filter-bar form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 620px) {
+  .app-workspace .record-filter-bar label:first-of-type { grid-column: 1/-1; }
+  .app-source-controls, .app-source-controls .record-selector { grid-template-columns: minmax(0,1fr); }
+  .app-source-controls .btn { justify-self: start; }
+}
