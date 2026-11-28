@@ -34,7 +34,10 @@
       <div class="actions"><button class="btn primary" type="submit">Change Password</button></div>
     </form>
     {% endif %}
+    <form method="post" action="{{url_for('logout')}}" class="stack account-form" data-confirm-category="logout">
+      <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+      <div class="actions"><button class="btn danger" type="submit">Sign Out</button></div>
+    </form>
   </section>
 </div>
-{% if otp_enabled %}<form method="post" action="{{url_for('logout')}}" data-confirm-category="logout"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn danger" type="submit">Sign Out</button></form>{% endif %}
 {% endblock %}

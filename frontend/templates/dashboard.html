@@ -19,7 +19,7 @@
 {% if workflow_unavailable %}<div class="notice" role="status">The revised procurement workspace is currently unavailable. Existing dashboard records remain visible; no procurement operation was enabled.</div>{% endif %}
 {% if revised_workflow_active %}
 <section class="dash-panel procurement-queue" aria-labelledby="procurement-queue-title">
-  <div class="dash-heading"><h3 id="procurement-queue-title">{{icon('document')}}Procurement Work Queue</h3><a href="{{url_for('aoq')}}">Open independent AOQ workspace</a></div>
+  <div class="dash-heading"><h3 id="procurement-queue-title">{{icon('document')}}Procurement Work Queue</h3></div>
   <p class="muted">PR and AOQ are prepared independently. Verify the created PO against its approved PR, document the relationship, then complete separate final approval.</p>
   <div class="procurement-queue-grid">{% for step in procurement_queue %}<a href="{{url_for(step.endpoint)}}"><b>{{step.label}}</b><strong>{{step.count}}</strong><small>{{step.note}}</small></a>{% else %}<p class="notice">Workflow counts are unavailable. Open the document lists to inspect existing records.</p>{% endfor %}</div>
 </section>
