@@ -112,6 +112,7 @@ def inject_layout_context():
         'otp_enabled': account_otp.enabled(),
         'forgot_password_enabled': account_otp.forgot_enabled(),
         'current_account': dict(account) if account else None,
+        'home_endpoint': home_endpoint(),
         'sync_topics': live_updates.topics_for_page,
         'record_pagination': getattr(g,'psms_pagination',None),
         'pagination_url': pagination_url,
@@ -333,10 +334,16 @@ def is_admin():
     return current_role().lower() == 'admin'
 
 
+def home_endpoint():
+    if is_admin():
+        return 'dashboard'
+    return 'iar' if current_role() == 'Inspector' else 'pr'
+
+
 def require_admin_access():
     if not is_admin():
         flash('Administrator access is required for that page.')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for(home_endpoint()))
     return None
 def parse_currency_decimal(value):
     """Parse a procurement amount without silently converting invalid text to zero.
@@ -2304,7 +2311,7 @@ csrf_protection = init_csrf(app)
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if session.get('logged_in'):
-        return redirect(url_for('dashboard'))
+        return redirect(url_for(home_endpoint()))
     if request.method == 'POST':
         username = (request.form.get('username') or '').strip()
         password = request.form.get('password') or ''
@@ -2357,7 +2364,7 @@ def login():
             except Exception:
                 pass
             flash('Login successful.','success')
-            return redirect(url_for('dashboard'))
+            return redirect(url_for(home_endpoint()))
         flash('Invalid username or password.','error')
     return render_template('login.html', title='Login')
 
@@ -2392,6 +2399,9 @@ def add_no_cache_headers(response):
 
 @app.route('/')
 def dashboard():
+    guard = require_admin_access()
+    if guard:
+        return guard
     from dashboard_data import build_dashboard
     workflow_unavailable = False
     try:
