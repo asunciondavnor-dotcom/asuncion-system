@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% from 'pr_po_verification_ui.html' import result_badge,outcome_badge,result_summary,comparison_table,findings_table,model_assessment,source_approval_summary with context %}
-{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css')}}">{% endblock %}
+{% from 'ui.html' import icon %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='verification-modal-1')}}">{% endblock %}
 {% block content %}<section class="card pr-po-simple"><h2>PR–PO Review</h2>
 <div class="actions"><a class="btn small" href="{{url_for('nlp_algorithms')}}">Model information</a>{% if session.get('role')=='Admin' %}<a class="btn small" href="{{url_for('nlp_prediction_preview')}}">Preview model prediction</a>{% endif %}</div>
 {% if model_state and (model_state.manifest or {}).get('deployed_model') == 'FastText + Random Forest' %}<p class="notice"><strong>Using FastText + Random Forest.</strong> Archived validation accuracy: 72.36% across 492 controlled examples.</p>{% endif %}
@@ -10,6 +11,14 @@
 <button class="btn primary" name="action" value="run" type="submit" {{'disabled' if not can_infer or not prs or not pos or not final_contract_ready}}>Run Verification</button></form>
 <p class="notice" data-pr-po-selection-message role="status">Choose a PO and its corresponding approved PR. Existing verification results reopen without creating duplicates.</p>
 {% if not final_contract_ready %}<p class="notice">Verification is temporarily unavailable. Contact your system administrator.</p>{% endif %}{% if not can_infer %}<p class="notice">{{model_state.message}}</p>{% endif %}{% endif %}
+{% set records_url = pagination_url(record_pagination.page,verification_id=none,pr_id=none,po_id=none) if record_pagination and not historical|default(false) else url_for('nlp') %}
+<dialog class="verification-dialog" id="verificationReviewDialog" aria-labelledby="verificationReviewTitle" data-item-review{% if verification %} open data-open-verification{% endif %}>
+  <header class="verification-dialog-header">
+    <span class="verification-dialog-icon">{{icon('check')}}</span>
+    <h2 id="verificationReviewTitle">Verification review</h2>
+    <a class="btn small" href="{{records_url}}#verificationRecords" data-close-verification>{{icon('close')}} Close</a>
+  </header>
+  <div class="verification-dialog-body" data-verification-details tabindex="0" role="region" aria-label="Verification details">
 {% if verification %}{% set v=verification %}
 <header class="pr-po-record-heading">
   <h3>{{v.row.no}}</h3>
@@ -64,6 +73,9 @@
 {% endif %}{% endif %}{% endif %}
 {% if verification and verification.row.status=='Approved' and verification.inspection_ready|default(false) %}<a class="btn primary" href="{{url_for('iar',po_id=verification.po.id)}}">Continue to IAR / AIR</a>{% endif %}
 {% if verification and not historical|default(false) and verification.row.workflow_version==2 and verification.row.status=='Reviewed' %}<p><a class="btn" href="{{url_for('iar',verification_id=verification.row.id)}}">Open Inspection Preparation</a> Review the findings in IAR/AIR. Official receiving requires PR-PO approval.</p>{% endif %}
-{% if not historical|default(false) %}<h3>Verification Records</h3><div class="table-scroll"><table class="table"><thead><tr><th>Record</th><th>PR</th><th>PO</th><th>Predicted classification</th><th>Source comparison</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for saved in rows %}<tr><td>{{saved.no}}</td><td>{{saved.pr_no or 'Not recorded'}}</td><td>{{saved.po_no}}</td><td>{{outcome_badge(saved.result,saved.confidence)}}</td><td>{{result_badge(record_displays[saved.id],source_only=true)}}</td><td>{{saved.status}}</td><td><a class="btn small" href="{{url_for('nlp',verification_id=saved.id)}}">{{'Review' if saved.workflow_version==2 and saved.status=='For Review' else 'Approve' if saved.workflow_version==2 and saved.status=='Reviewed' and record_displays[saved.id].eligibility_status=='Match' else 'View Results'}}</a></td></tr>{% else %}<tr><td colspan="7">No saved verification results.</td></tr>{% endfor %}</tbody></table></div>{% if record_pagination %}<nav>{% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1)}}">Previous</a>{% endif %}{% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1)}}">Next</a>{% endif %}</nav>{% endif %}{% endif %}
+  </div>
+</dialog>
+{% if historical|default(false) %}<p><a class="btn" href="{{records_url}}">Back to Verification Records</a></p>{% endif %}
+{% if not historical|default(false) %}<h3 id="verificationRecords" tabindex="-1">Verification Records</h3><div class="table-scroll"><table class="table"><thead><tr><th>Record</th><th>PR</th><th>PO</th><th>Predicted classification</th><th>Source comparison</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for saved in rows %}<tr><td>{{saved.no}}</td><td>{{saved.pr_no or 'Not recorded'}}</td><td>{{saved.po_no}}</td><td>{{outcome_badge(saved.result,saved.confidence)}}</td><td>{{result_badge(record_displays[saved.id],source_only=true)}}</td><td>{{saved.status}}</td><td><a class="btn small" data-review-verification aria-haspopup="dialog" href="{{pagination_url(record_pagination.page,verification_id=saved.id,pr_id=none,po_id=none) if record_pagination else url_for('nlp',verification_id=saved.id)}}">{{'Review' if saved.workflow_version==2 and saved.status=='For Review' else 'Approve' if saved.workflow_version==2 and saved.status=='Reviewed' and record_displays[saved.id].eligibility_status=='Match' else 'View Results'}}</a></td></tr>{% else %}<tr><td colspan="7">No saved verification results.</td></tr>{% endfor %}</tbody></table></div>{% if record_pagination %}<nav>{% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1)}}">Previous</a>{% endif %}{% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1)}}">Next</a>{% endif %}</nav>{% endif %}{% endif %}
 </section>{% endblock %}
-{% block scripts %}<script defer src="{{url_for('static',filename='js/pr-po-selection.js')}}"></script>{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/pr-po-selection.js',v='verification-modal-1')}}"></script>{% endblock %}

@@ -30,3 +30,90 @@
   pr.addEventListener('change', () => update());
   update(true);
 })();
+
+
+/* Open saved results in place while retaining a normal record URL. */
+(() => {
+  const dialog = document.getElementById('verificationReviewDialog');
+  if (!dialog || typeof dialog.showModal !== 'function') return;
+  const body = dialog.querySelector('[data-verification-details]');
+  const close = dialog.querySelector('[data-close-verification]');
+  const direct = dialog.hasAttribute('data-open-verification');
+  let launcher;
+  let pending;
+
+  const updateMessage = message => {
+    const status = document.createElement('p');
+    status.setAttribute('role', 'status');
+    status.textContent = message;
+    body.replaceChildren(status);
+  };
+
+  if (direct) {
+    dialog.removeAttribute('open');
+    body.prepend(...document.querySelectorAll('#mainContent > .notice[data-category]:not(.live-update-notice)'));
+    dialog.showModal();
+  }
+
+  body.addEventListener('input', event => {
+    const form = event.target.closest('form[method="post"]');
+    if (form) form.dataset.syncDirty = 'true';
+  });
+  const canClose = () => !body.querySelector('form[data-sync-dirty="true"]') ||
+    window.confirm('Discard the unsaved review changes?');
+  close.addEventListener('click', event => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    if (!canClose()) {
+      event.preventDefault();
+      return;
+    }
+    if (direct) return;
+    event.preventDefault();
+    dialog.close();
+  });
+  dialog.addEventListener('cancel', event => {
+    if (!canClose()) {
+      event.preventDefault();
+      return;
+    }
+    if (!direct) return;
+    event.preventDefault();
+    window.location.assign(close.href);
+  });
+  dialog.addEventListener('close', () => {
+    pending?.abort();
+    body.removeAttribute('aria-busy');
+    body.replaceChildren();
+    launcher?.focus();
+  });
+
+  document.addEventListener('click', async event => {
+    const link = event.target.closest?.('[data-review-verification]');
+    if (!link || dialog.open || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    launcher = link;
+    updateMessage('Loading verification…');
+    body.setAttribute('aria-busy', 'true');
+    dialog.showModal();
+    const request = new AbortController();
+    pending = request;
+    try {
+      const response = await fetch(link.href, { cache: 'no-store', signal: request.signal });
+      if (!response.ok || response.redirected) throw new Error('Verification could not be loaded');
+      const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const details = page.querySelector('#verificationReviewDialog[data-open-verification] [data-verification-details]');
+      if (!details) throw new Error('Verification details are unavailable');
+      if (!request.signal.aborted) {
+        body.replaceChildren(...details.childNodes);
+        body.scrollTop = 0;
+      }
+    } catch (error) {
+      if (!request.signal.aborted) window.location.assign(link.href);
+    } finally {
+      if (pending === request) {
+        pending = null;
+        body.removeAttribute('aria-busy');
+      }
+    }
+  });
+})();
