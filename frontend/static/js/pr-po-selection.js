@@ -6,6 +6,7 @@
   const pr = form.querySelector('[name="pr_id"]');
   const po = form.querySelector('[name="po_id"]');
   const button = form.querySelector('button[type="submit"]');
+  const label = button?.querySelector('[data-verification-action]') || button;
   const notice = document.querySelector('[data-pr-po-selection-message]');
   if (!pr || !po || !button || !notice) return;
   const update = (selectLinked = false) => {
@@ -16,7 +17,7 @@
     const pairReady = Boolean(pr.value && po.value && (!expected || pr.value === expected));
     const existing = Boolean(option?.dataset.savedPrId);
     const hasHistory = option?.dataset.hasVerification === 'yes';
-    button.textContent = existing ? 'Open Saved Verification' : hasHistory ? 'Check Verification' : 'Run Verification';
+    label.textContent = existing ? 'Open Saved Verification' : hasHistory ? 'Check Verification' : 'Run Verification';
     button.disabled = !pairReady || (!hasHistory && (form.dataset.inferenceActive !== 'yes' || form.dataset.saveReady !== 'yes'));
     notice.textContent = expected && pr.value !== expected
       ? 'The corresponding PR is not available in the approved list. Open the saved record or review its source status.'

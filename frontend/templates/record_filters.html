@@ -4,12 +4,12 @@
 <section class="card record-filter-bar" aria-label="Record search and filters">
 {% if app_workspace %}<h3 class="app-filter-heading">{{aoq_icon('filters')}} Find records</h3>{% endif %}
 <form method="get" data-auto-filters data-record-navigation><input type="hidden" name="_nav" value="{{navigation_token()}}">
-<label>{{'Keyword' if app_workspace else 'Find records'}}{% if ppmp_workspace or app_workspace or po_workspace %}<span class="ppmp-search">{{aoq_icon('search')}}{% endif %}<input name="q" type="search" value="{{request.args.get('q','')}}" maxlength="160" placeholder="{{'Document, item or linked reference' if ppmp_workspace or app_workspace else 'Document, item, supplier' if po_workspace else 'Document, item, supplier or linked reference'}}">{% if ppmp_workspace or app_workspace or po_workspace %}</span>{% endif %}</label>
-{% if pr_workspace or ppmp_workspace or app_workspace or po_workspace %}
+<label>{{'Keyword' if app_workspace else 'Find records'}}{% if ppmp_workspace or app_workspace or po_workspace or verification_workspace %}<span class="ppmp-search">{{aoq_icon('search')}}{% endif %}<input name="q" type="search" value="{{request.args.get('q','')}}" maxlength="160" placeholder="{{'Document, item or linked reference' if ppmp_workspace or app_workspace else 'Document, item, supplier' if po_workspace or verification_workspace else 'Document, item, supplier or linked reference'}}">{% if ppmp_workspace or app_workspace or po_workspace or verification_workspace %}</span>{% endif %}</label>
+{% if pr_workspace or ppmp_workspace or app_workspace or po_workspace or verification_workspace %}
 {% set selected_status=request.args.get('status','') %}
 <label>Status<select name="status" aria-label="Status"><option value="">All statuses</option>{% set statuses = ['For Review','Approved'] if po_workspace else ['For Review','Reviewed','Approved'] %}{% for status in statuses %}<option {{'selected' if selected_status==status}}>{{status}}</option>{% endfor %}{% if selected_status and selected_status not in statuses %}<option selected>{{selected_status}}</option>{% endif %}</select></label>
 {% elif active!='audit' %}<label>Status<input name="status" value="{{request.args.get('status','')}}" maxlength="60" placeholder="All statuses"></label>{% endif %}
-{% if po_workspace %}
+{% if po_workspace or verification_workspace %}
 {% set year = request.args.get('year','')|trim %}
 <label>Record year<select name="year" aria-label="Record year"><option value="">All years</option>{% for available_year in record_years %}<option value="{{available_year}}" {{'selected' if year==available_year}}>{{available_year}}</option>{% endfor %}{% if year and year not in record_years %}<option value="{{year}}" selected>{{year}}</option>{% endif %}</select></label>
 {% else %}<label>Record year<input name="year" type="number" min="1900" max="2199" step="1" value="{{request.args.get('year','')}}" placeholder="All years" aria-label="Filter records by fiscal or document year"></label>{% endif %}

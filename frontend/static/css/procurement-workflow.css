@@ -767,3 +767,39 @@ body:has(.verification-dialog:modal) { overflow: hidden; }
   .verification-dialog { width: calc(100% - 14px); max-height: 94dvh; }
   .verification-dialog-header,.verification-dialog-body { padding: 12px; }
 }
+
+
+/* PR–PO verification workspace */
+.verification-workspace { grid-template-columns: minmax(0,1fr); gap: 14px; }
+.verification-workspace > .verification-page-title { margin: 0; font-size: clamp(1.4rem,2.7vw,1.9rem); }
+.verification-workspace > .card { margin: 0; padding: 14px; border-color: #dce6e1; }
+.verification-workspace .record-filter-bar form {
+  display: grid; grid-template-columns: minmax(10rem,1.65fr) repeat(3,minmax(6.5rem,1fr)) auto;
+  align-items: end; gap: 9px 14px; margin: 0;
+}
+.verification-workspace .record-filter-bar label,.verification-workspace .pr-po-select label { gap: 4px; }
+.verification-workspace .ppmp-search input { width: 100%; min-width: 0; padding-left: 34px; }
+.verification-workspace :is(.record-filter-bar,.verification-card-tools,.verification-register) .btn {
+  color: #16572f; border-color: #a8ccb0; background: #f5fbf5;
+}
+.verification-workspace :is(.record-filter-bar,.verification-card-tools,.verification-register) .btn:hover { background: #e3f3e6; }
+.verification-card-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.verification-workspace .verification-card-heading h3,.verification-workspace .verification-register h3 { margin: 0; }
+.verification-workspace .verification-card-tools { margin: 0; gap: 7px; }
+.verification-workspace .pr-po-select { border: 0; padding: 0; margin-top: 10px; gap: 10px 12px; }
+.verification-workspace .verification-run-card .notice { margin: 10px 0 0; }
+.verification-workspace .verification-register .table-scroll { margin: 9px 0 0; max-height: clamp(210px,46vh,435px); }
+.verification-workspace .verification-register .table { min-width: 790px; }
+.verification-workspace .verification-register .table thead th { background: #e2f0e6; color: #14221b; }
+.verification-register .table :is(th,td) { padding: 6px 9px; vertical-align: middle; }
+.verification-register .table tbody th { position: static; background: inherit; font: inherit; white-space: nowrap; }
+.verification-register .table tbody tr:nth-child(even) th { background: #fafbfd; }
+.verification-register .table .btn { min-height: 30px; padding: 3px 8px; white-space: nowrap; }
+.verification-register .table .pr-po-outcome { padding: 3px 7px; }
+.verification-register .dataset-pagination { margin: 7px 0 0; flex-wrap: wrap; }
+@media(max-width:1050px) {
+  .verification-workspace .record-filter-bar form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:620px) {
+  .verification-workspace .record-filter-bar label:first-of-type { grid-column: 1/-1; }
+}

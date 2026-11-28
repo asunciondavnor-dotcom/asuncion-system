@@ -1,16 +1,32 @@
 {% extends 'base.html' %}
 {% from 'pr_po_verification_ui.html' import result_badge,outcome_badge,result_summary,comparison_table,findings_table,model_assessment,source_approval_summary with context %}
 {% from 'ui.html' import icon %}
-{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='verification-modal-1')}}">{% endblock %}
-{% block content %}<section class="card pr-po-simple"><h2>PR–PO Review</h2>
-<div class="actions"><a class="btn small" href="{{url_for('nlp_algorithms')}}">Model information</a>{% if session.get('role')=='Admin' %}<a class="btn small" href="{{url_for('nlp_prediction_preview')}}">Preview model prediction</a>{% endif %}</div>
+{% from 'procurement_ui.html' import aoq_icon %}
+{% block head_extra %}<link rel="stylesheet" href="{{url_for('static',filename='css/procurement-workflow.css',v='verification-layout-1')}}">{% endblock %}
+{% block record_filters %}{% endblock %}
+{% block record_pagination %}{% endblock %}
+{% block content %}
+<div class="pr-po-simple verification-workspace">
+  <h2 class="verification-page-title">PR–PO Verification</h2>
+  {% if not historical|default(false) %}
+  {% with verification_workspace=true %}{% include 'record_filters.html' %}{% endwith %}
+  <section class="card verification-run-card" aria-labelledby="verificationRunTitle">
+    <div class="verification-card-heading">
+      <h3 id="verificationRunTitle">PR–PO Review</h3>
+      <div class="actions verification-card-tools">
+        <a class="btn small" href="{{url_for('nlp_algorithms')}}">{{aoq_icon('info')}} Model information</a>
+        {% if session.get('role')=='Admin' %}<a class="btn small" href="{{url_for('nlp_prediction_preview')}}">{{aoq_icon('eye')}} Preview model prediction</a>{% endif %}
+      </div>
+    </div>
 {% if model_state and (model_state.manifest or {}).get('deployed_model') == 'FastText + Random Forest' %}<p class="notice"><strong>Using FastText + Random Forest.</strong> Archived validation accuracy: 72.36% across 492 controlled examples.</p>{% endif %}
-{% set can_infer = model_state.active or model_state.can_prepare %}{% if not historical|default(false) %}<form action="{{url_for('nlp')}}" method="post" class="pr-po-select" data-pr-po-selection data-inference-active="{{'yes' if can_infer else 'no'}}" {% if config.get('RENDER_MODEL_PREPARATION') and final_contract_ready and prs and pos %}data-model-preparation="{{url_for('inference_preparation',kind='rf')}}" data-model-preparation-action="run" {% endif %}data-save-ready="{{'yes' if final_contract_ready else 'no'}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">
-<label>Approved PR<select name="pr_id" required><option value="">Select Approved PR</option>{% for r in prs %}<option value="{{r.id}}" {{'selected' if selected_pr and selected_pr.id==r.id}}>{{r.no}} — {{r.office}}</option>{% endfor %}</select></label>
-<label>Approved PO<select name="po_id" required><option value="">Select Approved PO</option>{% for p in pos %}<option value="{{p.id}}" data-pr-id="{{p.get('linked_pr_id') or p.get('saved_pr_id') or ''}}" data-saved-pr-id="{{p.get('saved_pr_id') or ''}}" data-has-verification="{{'yes' if p.has_verification else 'no'}}" {{'selected' if selected_po and selected_po.id==p.id}}>{{p.no}} — {{p.supplier}}</option>{% endfor %}</select></label>
-<button class="btn primary" name="action" value="run" type="submit" {{'disabled' if not can_infer or not prs or not pos or not final_contract_ready}}>Run Verification</button></form>
+{% set can_infer = model_state.active or model_state.can_prepare %}<form action="{{url_for('nlp')}}" method="post" class="pr-po-select" data-pr-po-selection data-inference-active="{{'yes' if can_infer else 'no'}}" {% if config.get('RENDER_MODEL_PREPARATION') and final_contract_ready and prs and pos %}data-model-preparation="{{url_for('inference_preparation',kind='rf')}}" data-model-preparation-action="run" {% endif %}data-save-ready="{{'yes' if final_contract_ready else 'no'}}"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+<label>Approved PR<select name="pr_id" aria-label="Approved PR" required><option value="">Select Approved PR</option>{% for r in prs %}<option value="{{r.id}}" {{'selected' if selected_pr and selected_pr.id==r.id}}>{{r.no}} — {{r.office}}</option>{% endfor %}</select></label>
+<label>Approved PO<select name="po_id" aria-label="Approved PO" required><option value="">Select Approved PO</option>{% for p in pos %}<option value="{{p.id}}" data-pr-id="{{p.get('linked_pr_id') or p.get('saved_pr_id') or ''}}" data-saved-pr-id="{{p.get('saved_pr_id') or ''}}" data-has-verification="{{'yes' if p.has_verification else 'no'}}" {{'selected' if selected_po and selected_po.id==p.id}}>{{p.no}} — {{p.supplier}}</option>{% endfor %}</select></label>
+<button class="btn primary" name="action" value="run" type="submit" {{'disabled' if not can_infer or not prs or not pos or not final_contract_ready}}>{{icon('check')}} <span data-verification-action>Run Verification</span></button></form>
 <p class="notice" data-pr-po-selection-message role="status">Choose a PO and its corresponding approved PR. Existing verification results reopen without creating duplicates.</p>
-{% if not final_contract_ready %}<p class="notice">Verification is temporarily unavailable. Contact your system administrator.</p>{% endif %}{% if not can_infer %}<p class="notice">{{model_state.message}}</p>{% endif %}{% endif %}
+{% if not final_contract_ready %}<p class="notice">Verification is temporarily unavailable. Contact your system administrator.</p>{% endif %}{% if not can_infer %}<p class="notice">{{model_state.message}}</p>{% endif %}
+  </section>
+  {% endif %}
 {% set records_url = pagination_url(record_pagination.page,verification_id=none,pr_id=none,po_id=none) if record_pagination and not historical|default(false) else url_for('nlp') %}
 <dialog class="verification-dialog" id="verificationReviewDialog" aria-labelledby="verificationReviewTitle" data-item-review{% if verification %} open data-open-verification{% endif %}>
   <header class="verification-dialog-header">
@@ -76,6 +92,32 @@
   </div>
 </dialog>
 {% if historical|default(false) %}<p><a class="btn" href="{{records_url}}">Back to Verification Records</a></p>{% endif %}
-{% if not historical|default(false) %}<h3 id="verificationRecords" tabindex="-1">Verification Records</h3><div class="table-scroll"><table class="table"><thead><tr><th>Record</th><th>PR</th><th>PO</th><th>Predicted classification</th><th>Source comparison</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for saved in rows %}<tr><td>{{saved.no}}</td><td>{{saved.pr_no or 'Not recorded'}}</td><td>{{saved.po_no}}</td><td>{{outcome_badge(saved.result,saved.confidence)}}</td><td>{{result_badge(record_displays[saved.id],source_only=true)}}</td><td>{{saved.status}}</td><td><a class="btn small" data-review-verification aria-haspopup="dialog" href="{{pagination_url(record_pagination.page,verification_id=saved.id,pr_id=none,po_id=none) if record_pagination else url_for('nlp',verification_id=saved.id)}}">{{'Review' if saved.workflow_version==2 and saved.status=='For Review' else 'Approve' if saved.workflow_version==2 and saved.status=='Reviewed' and record_displays[saved.id].eligibility_status=='Match' else 'View Results'}}</a></td></tr>{% else %}<tr><td colspan="7">No saved verification results.</td></tr>{% endfor %}</tbody></table></div>{% if record_pagination %}<nav>{% if record_pagination.page>1 %}<a class="btn" href="{{pagination_url(record_pagination.page-1)}}">Previous</a>{% endif %}{% if record_pagination.has_next %}<a class="btn" href="{{pagination_url(record_pagination.page+1)}}">Next</a>{% endif %}</nav>{% endif %}{% endif %}
-</section>{% endblock %}
-{% block scripts %}<script defer src="{{url_for('static',filename='js/pr-po-selection.js',v='verification-modal-1')}}"></script>{% endblock %}
+{% if not historical|default(false) %}
+  <section class="card verification-register" aria-labelledby="verificationRecords">
+    <h3 id="verificationRecords" tabindex="-1">Verification Records</h3>
+    <div class="table-scroll">
+      <table class="table" aria-labelledby="verificationRecords">
+        <thead><tr><th scope="col">Record</th><th scope="col">PR</th><th scope="col">PO</th><th scope="col">Predicted classification</th><th scope="col">Source comparison</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+        <tbody>
+          {% for saved in rows %}
+          {% set needs_review = saved.workflow_version==2 and saved.status=='For Review' %}
+          {% set ready_to_approve = saved.workflow_version==2 and saved.status=='Reviewed' and record_displays[saved.id].eligibility_status=='Match' %}
+          <tr>
+            <th scope="row">{{saved.no}}</th><td>{{saved.pr_no or 'Not recorded'}}</td><td>{{saved.po_no}}</td>
+            <td>{{outcome_badge(saved.result)}}</td>
+            <td>{{result_badge(record_displays[saved.id],source_only=true)}}</td>
+            <td>{{saved.status}}</td>
+            <td><a class="btn small" data-review-verification aria-haspopup="dialog" href="{{pagination_url(record_pagination.page,verification_id=saved.id,pr_id=none,po_id=none) if record_pagination else url_for('nlp',verification_id=saved.id)}}">{{icon('check') if ready_to_approve else aoq_icon('eye')}} {{'Review' if needs_review else 'Approve' if ready_to_approve else 'View Results'}}</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="empty-state">{{'No verification records match these filters.' if request.args.get('q') or request.args.get('status') or request.args.get('year') else 'No saved verification results.'}}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% include 'record_pagination.html' %}
+  </section>
+{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script defer src="{{url_for('static',filename='js/pr-po-selection.js',v='verification-layout-1')}}"></script>{% endblock %}
